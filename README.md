@@ -1,0 +1,1 @@
+# cluster-api-adoption
