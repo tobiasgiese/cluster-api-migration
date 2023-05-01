@@ -48,6 +48,8 @@ prereqs() {
         exit 1
     fi
 
+    mkdir -p "$TMP_BIN_PATH"
+
     clusterctl_location="$TMP_BIN_PATH/clusterctl"
     if [[ ! -f "${clusterctl_location}" ]]; then
         wget -O "${clusterctl_location}" https://github.com/kubernetes-sigs/cluster-api/releases/download/${CAPI_VERSION}/clusterctl-linux-amd64
