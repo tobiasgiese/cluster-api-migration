@@ -69,6 +69,10 @@ add_cluster_owner_reference() {
 	jq ".metadata.ownerReferences[].uid = \"$(get_uid cluster capi-quickstart)\""
 }
 
+kcp_or_md_ready() {
+	jq -e '.items[].status | select(.replicas == .readyReplicas and .readyReplicas == .updatedReplicas and (.unavailableReplicas == 0 or .unavailableReplicas == null)) | true'
+}
+
 prereqs() {
 	if [[ "$OSTYPE" != "linux-gnu"* ]]; then
 		echo "⚠️ This script is optimized for Linux. It may not run correctly under $OSTYPE."
@@ -144,8 +148,8 @@ init_workload_cluster() {
 	kind load docker-image --name capi-quickstart docker.io/calico/cni:$CALICO_VERSION docker.io/calico/node:$CALICO_VERSION docker.io/calico/kube-controllers:$CALICO_VERSION
 	kubectl --kubeconfig=$TMP_PATH/kubeconfig-workloadcluster apply -f https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/calico.yaml
 
-	wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | jq -e '.items[].status | select(.replicas == .readyReplicas and .readyReplicas == .updatedReplicas and .unavailableReplicas == 0)'"
-	wait_for "MachineDeployment to be ready" "kubectl get md -ojson | jq -e '.items[].status | select(.replicas == .readyReplicas and .readyReplicas == .updatedReplicas and .unavailableReplicas == 0)'"
+	wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | kcp_or_md_ready"
+	wait_for "MachineDeployment to be ready" "kubectl get md -ojson | kcp_or_md_ready"
 
 	rm -f $TMP_PATH/workload-backup/*
 	echo "🐢 Creating backup for..."
@@ -271,6 +275,8 @@ adoption_phase_control_plane() {
 
 	# Unpause KubeadmControlPlane.
 	kubectl annotate kubeadmcontrolplane "$kubeadmControlPlaneName" cluster.x-k8s.io/paused-
+
+	wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | kcp_or_md_ready"
 }
 
 adoption_phase_worker() {
@@ -349,6 +355,8 @@ adoption_phase_worker() {
 	kubectl annotate machinedeployment "$machineDeploymentName" cluster.x-k8s.io/paused-
 	kubectl annotate machineset "$machineSetName" cluster.x-k8s.io/paused-
 
+	wait_for "MachineDeployment to be ready" "kubectl get md -ojson | kcp_or_md_ready"
+
 	echo
 	echo "🐢 Done! The orphaned cluster has been successfully migraed into Cluster API - wihtout any replacement of the nodes!"
 	echo
@@ -361,7 +369,7 @@ rolling_upgrade_control_plane() {
 	clusterctl alpha rollout restart "kubeadmcontrolplane/$(kubectl get kcp -ojson | jq -r '.items[].metadata.name')"
 	# Wait a few seconds to let the rolling upgrade begin.
 	sleep 5
-	wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | jq -e '.items[].status | select(.replicas == .readyReplicas and .readyReplicas == .updatedReplicas and .unavailableReplicas == 0)'"
+	wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | kcp_or_md_ready"
 }
 
 rolling_upgrade_worker() {
@@ -371,7 +379,7 @@ rolling_upgrade_worker() {
 	clusterctl alpha rollout restart "machinedeployment/$(kubectl get md -ojson | jq -r '.items[].metadata.name')"
 	# Wait a few seconds to let the rolling upgrade begin.
 	sleep 5
-	wait_for "MachineDeployment to be ready" "kubectl get md -ojson | jq -e '.items[].status | select(.replicas == .readyReplicas and .readyReplicas == .updatedReplicas and .unavailableReplicas == 0)'"
+	wait_for "MachineDeployment to be ready" "kubectl get md -ojson | kcp_or_md_ready"
 }
 
 prereqs
