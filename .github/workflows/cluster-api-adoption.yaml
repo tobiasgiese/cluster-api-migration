@@ -35,14 +35,22 @@ jobs:
         run: |
           ./cluster-api-adoption.sh purge_and_init_mgmt_cluster
 
-      - name: Adoption Phase 1
+      - name: Adoption Phase Cluster
         run: |
-          ./cluster-api-adoption.sh adoption_phase_1
+          ./cluster-api-adoption.sh adoption_phase_cluster
 
-      - name: Adoption Phase 2
+      - name: Adoption Phase Control Plane
         run: |
-          ./cluster-api-adoption.sh adoption_phase_2
+          ./cluster-api-adoption.sh adoption_phase_control_plane
 
-      - name: Adoption Phase 3
+      - name: Adoption Phase Worker
         run: |
-          ./cluster-api-adoption.sh adoption_phase_3
+          ./cluster-api-adoption.sh adoption_phase_worker
+        
+      - name: Rolling Upgrade Control Plane
+        run: |
+          ./cluster-api-adoption.sh rolling_upgrade_control_plane
+
+      - name: Rolling Upgrade Worker
+        run: |
+          ./cluster-api-adoption.sh rolling_upgrade_worker

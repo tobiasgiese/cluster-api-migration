@@ -11,7 +11,7 @@ PATH=$TMP_BIN_PATH/:$PATH
 
 wait_for() {
     echo -n "🐢 Waiting for $1"
-    until eval "$2" &>/dev/null; do
+    until eval "$2" &> /dev/null; do
         printf .
         sleep 1
     done
@@ -59,7 +59,7 @@ prereqs() {
         echo "⚠️ This script is optimized for Linux. It may not run correctly under $OSTYPE."
     fi
 
-    if ! command -v docker >/dev/null; then
+    if ! command -v docker > /dev/null; then
         echo "❗ Docker not found - please install docker on your client first!"
         echo "❗ See https://docs.docker.com/engine/install/"
         exit 1
@@ -81,10 +81,10 @@ prereqs() {
     fi
 
     # Ensure jq and kubectl binaries if not found. It's not necessary to have a specific version.
-    if ! command -v jq >/dev/null; then
+    if ! command -v jq > /dev/null; then
         wget -qO "$TMP_BIN_PATH/jq" https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64
     fi
-    if ! command -v kubectl >/dev/null; then
+    if ! command -v kubectl > /dev/null; then
         k8sVersion=$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
         wget -qO "$TMP_BIN_PATH/kubectl" "https://storage.googleapis.com/kubernetes-release/release/${k8sVersion}/bin/linux/amd64/kubectl"
     fi
@@ -118,7 +118,7 @@ init_workload_cluster() {
     wait_for "kubeconfig to be created" "kubectl get secret capi-quickstart-kubeconfig"
 
     # Deploy CNI to have a ready KCP.
-    kubectl get secret capi-quickstart-kubeconfig -ojson | jq -r .data.value | base64 -d >$TMP_PATH/kubeconfig-workloadcluster
+    kubectl get secret capi-quickstart-kubeconfig -ojson | jq -r .data.value | base64 -d > $TMP_PATH/kubeconfig-workloadcluster
     # Preload CNI images to not hit the docker rate limit.
     docker pull -q docker.io/calico/cni:$CALICO_VERSION
     docker pull -q docker.io/calico/node:$CALICO_VERSION
@@ -129,20 +129,20 @@ init_workload_cluster() {
     kind load docker-image --name capi-quickstart docker.io/calico/cni:$CALICO_VERSION docker.io/calico/node:$CALICO_VERSION docker.io/calico/kube-controllers:$CALICO_VERSION
     kubectl --kubeconfig=$TMP_PATH/kubeconfig-workloadcluster apply -f https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/calico.yaml
 
-    wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | jq -e '.items[].status.ready == true'"
-    wait_for "MachineDeployment to be ready" "kubectl get md -ojson | jq -e '.items[].status | .replicas == .readyReplicas'"
+    wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | jq -e '.items[].status | select(.replicas == .readyReplicas and .readyReplicas == .updatedReplicas and .unavailableReplicas == 0)'"
+    wait_for "MachineDeployment to be ready" "kubectl get md -ojson | jq -e '.items[].status | select(.replicas == .readyReplicas and .readyReplicas == .updatedReplicas and .unavailableReplicas == 0)'"
 
     rm -f $TMP_PATH/workload-backup/*
     echo "🐢 Creating backup for..."
-    kubectl get "secret,$(kubectl api-resources -oname | grep cluster.x-k8s.io | cut -d. -f1 | xargs | sed 's/ /,/g')" -oname |
-        while IFS=/ read -r kind name; do
+    kubectl get "secret,$(kubectl api-resources -oname | grep cluster.x-k8s.io | cut -d. -f1 | xargs | sed 's/ /,/g')" -oname \
+        | while IFS=/ read -r kind name; do
             echo "  $kind/$name"
             # ${kind/.*} removes everything after the first dot.
-            kubectl get "$kind" "$name" -ojson >"$TMP_PATH/workload-backup/${kind/.*/}_${name}.json"
+            kubectl get "$kind" "$name" -ojson > "$TMP_PATH/workload-backup/${kind/.*/}_${name}.json"
         done
 }
 
-adoption_phase_1() {
+adoption_phase_cluster() {
     echo
     echo "🐢 We have an orphaned workload cluster now. Let's try to adopt it 🥳️"
     echo "🐢 Phase 1 - Adopting the Cluster Infrastructure."
@@ -150,26 +150,26 @@ adoption_phase_1() {
 
     # Apply necessary secrets.
     for secret in kubeconfig ca etcd sa; do
-        remove_unneccessary_fields <"secret_capi-quickstart-${secret}.json" |
-            remove_owner_reference |
-            kubectl apply -f -
+        remove_unneccessary_fields < "secret_capi-quickstart-${secret}.json" \
+            | remove_owner_reference \
+            | kubectl apply -f -
     done
 
     # Apply paused Cluster.
-    jq 'del(.spec.controlPlaneRef)' cluster_capi-quickstart.json |
-        remove_unneccessary_fields |
-        add_paused_annotation |
-        kubectl apply -f -
+    jq 'del(.spec.controlPlaneRef)' cluster_capi-quickstart.json \
+        | remove_unneccessary_fields \
+        | add_paused_annotation \
+        | kubectl apply -f -
 
     # Apply DockerCluster
-    add_cluster_owner_reference <dockercluster_* |
-        remove_unneccessary_fields |
-        kubectl apply -f -
+    add_cluster_owner_reference < dockercluster_* \
+        | remove_unneccessary_fields \
+        | kubectl apply -f -
 
     kubectl annotate cluster capi-quickstart cluster.x-k8s.io/paused-
 }
 
-adoption_phase_2() {
+adoption_phase_control_plane() {
     echo
     echo "🐢 Phase 2 - Adopting the Control Planes."
     echo
@@ -179,9 +179,9 @@ adoption_phase_2() {
         if [[ "$kubeadmConfig" == *"-md-"* ]]; then
             continue
         fi
-        remove_unneccessary_fields <"$kubeadmConfig" |
-            remove_owner_reference |
-            kubectl apply -f -
+        remove_unneccessary_fields < "$kubeadmConfig" \
+            | remove_owner_reference \
+            | kubectl apply -f -
     done
 
     # Apply control plane DockerMachineTemplates.
@@ -189,9 +189,9 @@ adoption_phase_2() {
         if [[ "$dockerMachineTemplate" == *"-md-"* ]]; then
             continue
         fi
-        add_cluster_owner_reference <"$dockerMachineTemplate" |
-            remove_unneccessary_fields |
-            kubectl apply -f -
+        add_cluster_owner_reference < "$dockerMachineTemplate" \
+            | remove_unneccessary_fields \
+            | kubectl apply -f -
     done
 
     # Apply control plane KubeadmConfigTemplates.
@@ -199,17 +199,17 @@ adoption_phase_2() {
         if [[ "$kubeadmConfigTemplate" == *"-md-"* ]]; then
             continue
         fi
-        add_cluster_owner_reference <"$kubeadmConfigTemplate" |
-            remove_unneccessary_fields |
-            kubectl apply -f -
+        add_cluster_owner_reference < "$kubeadmConfigTemplate" \
+            | remove_unneccessary_fields \
+            | kubectl apply -f -
     done
 
     # Apply paused KubeadmControlPlane.
-    jq 'del(.metadata.annotations["cluster.x-k8s.io/cloned-from-groupkind"], .metadata.annotations["cluster.x-k8s.io/cloned-from-name"])' kubeadmcontrolplane_* |
-        add_cluster_owner_reference |
-        remove_unneccessary_fields |
-        add_paused_annotation |
-        kubectl apply -f -
+    jq 'del(.metadata.annotations["cluster.x-k8s.io/cloned-from-groupkind"], .metadata.annotations["cluster.x-k8s.io/cloned-from-name"])' kubeadmcontrolplane_* \
+        | add_cluster_owner_reference \
+        | remove_unneccessary_fields \
+        | add_paused_annotation \
+        | kubectl apply -f -
     sleep 1
     kubeadmControlPlaneName=$(jq -r '.metadata.name' kubeadmcontrolplane_*)
     kubeadmControlPlaneUID=$(get_uid kubeadmcontrolplane "$kubeadmControlPlaneName")
@@ -224,12 +224,12 @@ adoption_phase_2() {
         fi
         kubeadmConfigName=$(jq -r '.spec.bootstrap.configRef.name' "${machine}")
         kubeadmConfigUID=$(kubectl get kubeadmconfig "$kubeadmConfigName" -ojsonpath='{.metadata.uid}')
-        jq ".metadata.ownerReferences[].uid = \"$kubeadmControlPlaneUID\"" "$machine" |
-            jq '.spec.bootstrap.configRef.uid = "'"$kubeadmConfigUID"'"' |
-            jq '.spec.bootstrap.dataSecretName = "secret-dummy"' |
-            remove_unneccessary_fields |
-            add_paused_annotation |
-            kubectl apply -f -
+        jq ".metadata.ownerReferences[].uid = \"$kubeadmControlPlaneUID\"" "$machine" \
+            | jq '.spec.bootstrap.configRef.uid = "'"$kubeadmConfigUID"'"' \
+            | jq '.spec.bootstrap.dataSecretName = "secret-dummy"' \
+            | remove_unneccessary_fields \
+            | add_paused_annotation \
+            | kubectl apply -f -
     done
 
     # Apply control plane DockerMachines and unpause Machine and DockerMachine.
@@ -240,10 +240,10 @@ adoption_phase_2() {
         machineName=$(jq -r '.metadata.ownerReferences[].name' "$dockerMachine")
         machineUID=$(get_uid machine "$machineName")
         # Apply DockerMachine.
-        jq ".metadata.ownerReferences[].uid = \"$machineUID\"" "$dockerMachine" |
-            remove_unneccessary_fields |
-            add_paused_annotation |
-            kubectl apply -f -
+        jq ".metadata.ownerReferences[].uid = \"$machineUID\"" "$dockerMachine" \
+            | remove_unneccessary_fields \
+            | add_paused_annotation \
+            | kubectl apply -f -
         sleep 1
         dockerMachineName=$(jq -r '.metadata.name' "$dockerMachine")
         dockerMachineUID=$(get_uid dockermachine "$dockerMachineName")
@@ -258,38 +258,38 @@ adoption_phase_2() {
     kubectl annotate kubeadmcontrolplane "$kubeadmControlPlaneName" cluster.x-k8s.io/paused-
 }
 
-adoption_phase_3() {
+adoption_phase_worker() {
     echo
     echo "🐢 Phase 3 - Adopting the MachineDeployment."
     echo
 
     # Apply worker kubeadmConfigs.
     for kubeadmConfig in kubeadmconfig_*-md-*; do
-        remove_unneccessary_fields <"$kubeadmConfig" |
-            remove_owner_reference |
-            kubectl apply -f -
+        remove_unneccessary_fields < "$kubeadmConfig" \
+            | remove_owner_reference \
+            | kubectl apply -f -
     done
 
     # Apply worker DockerMachineTemplates.
     for dockerMachineTemplate in dockermachinetemplate_*-md-*; do
-        add_cluster_owner_reference <"$dockerMachineTemplate" |
-            remove_unneccessary_fields |
-            kubectl apply -f -
+        add_cluster_owner_reference < "$dockerMachineTemplate" \
+            | remove_unneccessary_fields \
+            | kubectl apply -f -
     done
 
     # Apply worker KubeadmConfigTemplates.
     for kubeadmConfigTemplate in kubeadmconfigtemplate_*-md-*; do
-        add_cluster_owner_reference <"$kubeadmConfigTemplate" |
-            remove_unneccessary_fields |
-            kubectl apply -f -
+        add_cluster_owner_reference < "$kubeadmConfigTemplate" \
+            | remove_unneccessary_fields \
+            | kubectl apply -f -
     done
 
     # Apply paused MachineDeployment.
     for machineDeployment in machinedeployment_*; do
-        add_cluster_owner_reference <"$machineDeployment" |
-            remove_unneccessary_fields |
-            add_paused_annotation |
-            kubectl apply -f -
+        add_cluster_owner_reference < "$machineDeployment" \
+            | remove_unneccessary_fields \
+            | add_paused_annotation \
+            | kubectl apply -f -
     done
     sleep 1
     machineDeploymentName=$(jq -r '.metadata.name' machinedeployment_*)
@@ -297,10 +297,10 @@ adoption_phase_3() {
 
     # Apply Machineset.
     for machineSet in machineset_*; do
-        jq ".metadata.ownerReferences[].uid = \"$machineDeploymentUID\"" "$machineSet" |
-            remove_unneccessary_fields |
-            add_paused_annotation |
-            kubectl apply -f -
+        jq ".metadata.ownerReferences[].uid = \"$machineDeploymentUID\"" "$machineSet" \
+            | remove_unneccessary_fields \
+            | add_paused_annotation \
+            | kubectl apply -f -
     done
     sleep 1
     machineSetName=$(jq -r '.metadata.name' machineset_*)
@@ -308,10 +308,10 @@ adoption_phase_3() {
 
     # Apply paused worker Machines.
     for machine in machine_*-md-*; do
-        jq ".metadata.ownerReferences[].uid = \"$machineSetUID\"" "$machine" |
-            jq '.spec.bootstrap.dataSecretName = "secret-dummy"' |
-            remove_unneccessary_fields |
-            kubectl apply -f -
+        jq ".metadata.ownerReferences[].uid = \"$machineSetUID\"" "$machine" \
+            | jq '.spec.bootstrap.dataSecretName = "secret-dummy"' \
+            | remove_unneccessary_fields \
+            | kubectl apply -f -
     done
 
     # Apply paused worker DockerMachines.
@@ -319,9 +319,9 @@ adoption_phase_3() {
         machineName=$(jq -r '.metadata.ownerReferences[].name' "$dockerMachine")
         machineUID=$(get_uid machine "$machineName")
         # Apply DockerMachine.
-        jq ".metadata.ownerReferences[].uid = \"$machineUID\"" "$dockerMachine" |
-            remove_unneccessary_fields |
-            kubectl apply -f -
+        jq ".metadata.ownerReferences[].uid = \"$machineUID\"" "$dockerMachine" \
+            | remove_unneccessary_fields \
+            | kubectl apply -f -
         sleep 1
         dockerMachineName=$(jq -r '.metadata.name' "$dockerMachine")
         dockerMachineUID=$(get_uid dockermachine "$dockerMachineName")
@@ -335,12 +335,32 @@ adoption_phase_3() {
     kubectl annotate machineset "$machineSetName" cluster.x-k8s.io/paused-
 
     echo
-    echo "🐢 Done! The orphaned cluster has been successfully migraed into Cluster API - wihtout any downtime!"
+    echo "🐢 Done! The orphaned cluster has been successfully migraed into Cluster API - wihtout any replacement of the nodes!"
     echo
 }
 
+rolling_upgrade_control_plane() {
+    echo
+    echo "🐢 Starting rolling upgrade for the control plane nodes."
+    echo
+    clusterctl alpha rollout restart "kubeadmcontrolplane/$(kubectl get kcp -ojson | jq -r '.items[].metadata.name')"
+    # Wait a few seconds to let the rolling upgrade begin.
+    sleep 5
+    wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | jq -e '.items[].status | select(.replicas == .readyReplicas and .readyReplicas == .updatedReplicas and .unavailableReplicas == 0)'"
+}
+
+rolling_upgrade_worker() {
+    echo
+    echo "🐢 Starting rolling upgrade for the worker nodes."
+    echo
+    clusterctl alpha rollout restart "machinedeployment/$(kubectl get md -ojson | jq -r '.items[].metadata.name')"
+    # Wait a few seconds to let the rolling upgrade begin.
+    sleep 5
+    wait_for "MachineDeployment to be ready" "kubectl get md -ojson | jq -e '.items[].status | select(.replicas == .readyReplicas and .readyReplicas == .updatedReplicas and .unavailableReplicas == 0)'"
+}
+
 prereqs
-pushd $TMP_PATH/workload-backup/ >/dev/null
+pushd $TMP_PATH/workload-backup/ > /dev/null
 
 case "${1:-""}" in
 "purge_and_init_mgmt_cluster")
@@ -349,27 +369,35 @@ case "${1:-""}" in
 "init_workload_cluster")
     init_workload_cluster
     ;;
-"adoption_phase_1")
-    adoption_phase_1
+"adoption_phase_cluster")
+    adoption_phase_cluster
     ;;
-"adoption_phase_2")
-    adoption_phase_2
+"adoption_phase_control_plane")
+    adoption_phase_control_plane
     ;;
-"adoption_phase_3")
-    adoption_phase_3
+"adoption_phase_worker")
+    adoption_phase_worker
+    ;;
+"rolling_upgrade_control_plane")
+    rolling_upgrade_control_plane
+    ;;
+"rolling_upgrade_worker")
+    rolling_upgrade_worker
     ;;
 *)
     purge_and_init_mgmt_cluster
     init_workload_cluster
     purge_and_init_mgmt_cluster
-    adoption_phase_1
-    adoption_phase_2
-    adoption_phase_3
+    adoption_phase_cluster
+    adoption_phase_control_plane
+    adoption_phase_worker
+    rolling_upgrade_control_plane
+    rolling_upgrade_worker
     ;;
 esac
 
-pushd $TMP_PATH/workload-backup/ >/dev/null
+pushd $TMP_PATH/workload-backup/ > /dev/null
 
 kubectl get cluster,dockercluster,kcp,md,ma,dockermachine
 
-popd >/dev/null
+popd > /dev/null
