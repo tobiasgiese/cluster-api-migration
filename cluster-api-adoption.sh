@@ -9,6 +9,21 @@ TMP_PATH=/tmp/capi-adoption
 TMP_BIN_PATH=$TMP_PATH/bin
 PATH=$TMP_BIN_PATH/:$PATH
 
+usage() {
+	echo "Usage: $0 [command]"
+	echo "Description: This script performs various operations. Leave empty if you want to run them all."
+	echo
+	echo "Commands:"
+	echo "  purge_and_init_mgmt_cluster    Purge and initialize the management cluster."
+	echo "  init_workload_cluster          Initialize a new workload cluster."
+	echo "  adoption_phase_cluster         Perform the adoption phase on a cluster."
+	echo "  adoption_phase_control_plane   Perform the adoption phase on the control plane nodes of a cluster."
+	echo "  adoption_phase_worker          Perform the adoption phase on the worker nodes of a cluster."
+	echo "  rolling_upgrade_control_plane  Perform a rolling upgrade of the control plane of a cluster."
+	echo "  rolling_upgrade_worker         Perform a rolling upgrade of the worker nodes of a cluster."
+	echo
+}
+
 wait_for() {
 	echo -n "🐢 Waiting for $1"
 	until eval "$2" &> /dev/null; do
@@ -384,7 +399,7 @@ case "${1:-""}" in
 "rolling_upgrade_worker")
 	rolling_upgrade_worker
 	;;
-*)
+"")
 	purge_and_init_mgmt_cluster
 	init_workload_cluster
 	purge_and_init_mgmt_cluster
@@ -393,6 +408,12 @@ case "${1:-""}" in
 	adoption_phase_worker
 	rolling_upgrade_control_plane
 	rolling_upgrade_worker
+	;;
+*)
+	echo "Invalid command: $1"
+	echo
+	usage
+	exit 1
 	;;
 esac
 
