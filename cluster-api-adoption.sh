@@ -376,7 +376,10 @@ rolling_upgrade_worker() {
 	echo
 	echo "🐢 Starting rolling upgrade for the worker nodes."
 	echo
-	clusterctl alpha rollout restart "machinedeployment/$(kubectl get md -ojson | jq -r '.items[].metadata.name')"
+	machineDeploymentName=$(kubectl get md -ojson | jq -r '.items[].metadata.name')
+	# Patch maxSurge and maxUnavailable to 3 to add and remove all 3 worker nodes at once.
+	kubectl patch machinedeployment "$machineDeploymentName" --type='json' -p='[{"op": "replace", "path": "/spec/strategy/rollingUpdate", "value":{"maxSurge": 3, "maxUnavailable": 3}}]'
+	clusterctl alpha rollout restart "machinedeployment/$machineDeploymentName"
 	# Wait a few seconds to let the rolling upgrade begin.
 	sleep 5
 	wait_for "MachineDeployment to be ready" "kubectl get md -ojson | kcp_or_md_ready"
