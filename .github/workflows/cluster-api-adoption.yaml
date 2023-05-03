@@ -25,32 +25,32 @@ jobs:
 
       - name: Create Management Cluster
         run: |
-          ./cluster-api-adoption.sh purge_and_init_mgmt_cluster
+          ./cluster-api-adoption.sh docker purge_and_init_mgmt_cluster
 
       - name: Create Workload Cluster
         run: |
-          ./cluster-api-adoption.sh init_workload_cluster
+          ./cluster-api-adoption.sh docker init_workload_cluster
 
       - name: Purge & Create Management Cluster
         run: |
-          ./cluster-api-adoption.sh purge_and_init_mgmt_cluster
+          ./cluster-api-adoption.sh docker purge_and_init_mgmt_cluster
 
       - name: Adoption Phase Cluster
         run: |
-          ./cluster-api-adoption.sh adoption_phase_cluster
+          ./cluster-api-adoption.sh docker adoption_phase_cluster
 
       - name: Adoption Phase Control Plane
         run: |
-          ./cluster-api-adoption.sh adoption_phase_control_plane
+          ./cluster-api-adoption.sh docker adoption_phase_control_plane
 
       - name: Adoption Phase Worker
         run: |
-          ./cluster-api-adoption.sh adoption_phase_worker
+          ./cluster-api-adoption.sh docker adoption_phase_worker
         
       - name: Rolling Upgrade Control Plane
         run: |
-          ./cluster-api-adoption.sh rolling_upgrade_control_plane
+          ./cluster-api-adoption.sh docker rolling_upgrade_control_plane
 
       - name: Rolling Upgrade Worker
         run: |
-          ./cluster-api-adoption.sh rolling_upgrade_worker
+          ./cluster-api-adoption.sh docker rolling_upgrade_worker
