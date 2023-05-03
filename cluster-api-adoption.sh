@@ -1,17 +1,30 @@
 #!/bin/bash
+# shellcheck disable=SC1090
 
 set -euo pipefail
 
-CAPI_VERSION=v1.4.1
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+CAPI_VERSION=v1.4.2
 KIND_VERSION=v0.18.0
 CALICO_VERSION=v3.24.1
 TMP_PATH=/tmp/capi-adoption
 TMP_BIN_PATH=$TMP_PATH/bin
 PATH=$TMP_BIN_PATH/:$PATH
 
+PROVIDER=${1:-"docker"}
+COMMAND=${2-""}
+
+if [[ ! -d "providers/${PROVIDER}" ]]; then
+	echo "Provider not found: $PROVIDER"
+	exit 1
+fi
+
 usage() {
-	echo "Usage: $0 [command]"
+	echo "Usage: $0 [provider command]"
 	echo "Description: This script performs various operations. Leave empty if you want to run them all."
+	echo
+	echo "Example: $0 docker purge_and_init_mgmt_cluster"
 	echo
 	echo "Commands:"
 	echo "  purge_and_init_mgmt_cluster    Purge and initialize the management cluster."
@@ -107,6 +120,11 @@ prereqs() {
 		k8sVersion=$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
 		wget -qO "$TMP_BIN_PATH/kubectl" "https://storage.googleapis.com/kubernetes-release/release/${k8sVersion}/bin/linux/amd64/kubectl"
 	fi
+
+	# Source the infra specific prereqs and adoption functions.
+	source "${SCRIPT_DIR}/providers/${PROVIDER}/prereqs.sh"
+	source "${SCRIPT_DIR}/providers/${PROVIDER}/adoption.sh"
+	infra_prereqs
 }
 
 purge_and_init_mgmt_cluster() {
@@ -171,6 +189,7 @@ adoption_phase_cluster() {
 	for secret in kubeconfig ca etcd sa; do
 		remove_unneccessary_fields < "secret_capi-quickstart-${secret}.json" \
 			| remove_owner_reference \
+			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/secret_capi-quickstart-${secret}.json" \
 			| kubectl apply -f -
 	done
 
@@ -178,12 +197,10 @@ adoption_phase_cluster() {
 	jq 'del(.spec.controlPlaneRef)' cluster_capi-quickstart.json \
 		| remove_unneccessary_fields \
 		| add_paused_annotation \
+		| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/cluster_capi-quickstart.json" \
 		| kubectl apply -f -
 
-	# Apply DockerCluster
-	add_cluster_owner_reference < dockercluster_* \
-		| remove_unneccessary_fields \
-		| kubectl apply -f -
+	infra_cluster_adoption
 
 	kubectl annotate cluster capi-quickstart cluster.x-k8s.io/paused-
 }
@@ -200,16 +217,7 @@ adoption_phase_control_plane() {
 		fi
 		remove_unneccessary_fields < "$kubeadmConfig" \
 			| remove_owner_reference \
-			| kubectl apply -f -
-	done
-
-	# Apply control plane DockerMachineTemplates.
-	for dockerMachineTemplate in dockermachinetemplate_*; do
-		if [[ "$dockerMachineTemplate" == *"-md-"* ]]; then
-			continue
-		fi
-		add_cluster_owner_reference < "$dockerMachineTemplate" \
-			| remove_unneccessary_fields \
+			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${kubeadmConfig}")" \
 			| kubectl apply -f -
 	done
 
@@ -220,6 +228,7 @@ adoption_phase_control_plane() {
 		fi
 		add_cluster_owner_reference < "$kubeadmConfigTemplate" \
 			| remove_unneccessary_fields \
+			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${kubeadmConfigTemplate}")" \
 			| kubectl apply -f -
 	done
 
@@ -228,13 +237,14 @@ adoption_phase_control_plane() {
 		| add_cluster_owner_reference \
 		| remove_unneccessary_fields \
 		| add_paused_annotation \
+		| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/kubeadmcontrolplane.json" \
 		| kubectl apply -f -
 	sleep 1
 	kubeadmControlPlaneName=$(jq -r '.metadata.name' kubeadmcontrolplane_*)
 	kubeadmControlPlaneUID=$(get_uid kubeadmcontrolplane "$kubeadmControlPlaneName")
 
 	# Create secret-dummy. This secret is needed during node bootstrap and includes the cloud-init data.
-	kubectl create secret generic secret-dummy
+	kubectl create secret generic secret-dummy || true
 
 	# Apply paused control plane Machines.
 	for machine in machine_*; do
@@ -248,30 +258,11 @@ adoption_phase_control_plane() {
 			| jq '.spec.bootstrap.dataSecretName = "secret-dummy"' \
 			| remove_unneccessary_fields \
 			| add_paused_annotation \
+			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${machine}")" \
 			| kubectl apply -f -
 	done
 
-	# Apply control plane DockerMachines and unpause Machine and DockerMachine.
-	for dockerMachine in dockermachine_*; do
-		if [[ "$dockerMachine" == *"-md-"* ]]; then
-			continue
-		fi
-		machineName=$(jq -r '.metadata.ownerReferences[].name' "$dockerMachine")
-		machineUID=$(get_uid machine "$machineName")
-		# Apply DockerMachine.
-		jq ".metadata.ownerReferences[].uid = \"$machineUID\"" "$dockerMachine" \
-			| remove_unneccessary_fields \
-			| add_paused_annotation \
-			| kubectl apply -f -
-		sleep 1
-		dockerMachineName=$(jq -r '.metadata.name' "$dockerMachine")
-		dockerMachineUID=$(get_uid dockermachine "$dockerMachineName")
-
-		# Patch DockerMachine UID in Machine.
-		kubectl patch machine "$machineName" --type='json' -p='[{"op": "replace", "path": "/spec/infrastructureRef/uid", "value":"'"$dockerMachineUID"'"}]'
-		kubectl annotate machine "$machineName" cluster.x-k8s.io/paused-
-		kubectl annotate dockermachine "$dockerMachineName" cluster.x-k8s.io/paused-
-	done
+	infra_control_plane_adoption
 
 	# Unpause KubeadmControlPlane.
 	kubectl annotate kubeadmcontrolplane "$kubeadmControlPlaneName" cluster.x-k8s.io/paused-
@@ -288,13 +279,7 @@ adoption_phase_worker() {
 	for kubeadmConfig in kubeadmconfig_*-md-*; do
 		remove_unneccessary_fields < "$kubeadmConfig" \
 			| remove_owner_reference \
-			| kubectl apply -f -
-	done
-
-	# Apply worker DockerMachineTemplates.
-	for dockerMachineTemplate in dockermachinetemplate_*-md-*; do
-		add_cluster_owner_reference < "$dockerMachineTemplate" \
-			| remove_unneccessary_fields \
+			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${kubeadmConfig}")" \
 			| kubectl apply -f -
 	done
 
@@ -302,6 +287,7 @@ adoption_phase_worker() {
 	for kubeadmConfigTemplate in kubeadmconfigtemplate_*-md-*; do
 		add_cluster_owner_reference < "$kubeadmConfigTemplate" \
 			| remove_unneccessary_fields \
+			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${kubeadmConfigTemplate}")" \
 			| kubectl apply -f -
 	done
 
@@ -310,6 +296,7 @@ adoption_phase_worker() {
 		add_cluster_owner_reference < "$machineDeployment" \
 			| remove_unneccessary_fields \
 			| add_paused_annotation \
+			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${machineDeployment}")" \
 			| kubectl apply -f -
 	done
 	sleep 1
@@ -321,6 +308,7 @@ adoption_phase_worker() {
 		jq ".metadata.ownerReferences[].uid = \"$machineDeploymentUID\"" "$machineSet" \
 			| remove_unneccessary_fields \
 			| add_paused_annotation \
+			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${machineSet}")" \
 			| kubectl apply -f -
 	done
 	sleep 1
@@ -332,24 +320,11 @@ adoption_phase_worker() {
 		jq ".metadata.ownerReferences[].uid = \"$machineSetUID\"" "$machine" \
 			| jq '.spec.bootstrap.dataSecretName = "secret-dummy"' \
 			| remove_unneccessary_fields \
+			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${machine}")" \
 			| kubectl apply -f -
 	done
 
-	# Apply paused worker DockerMachines.
-	for dockerMachine in dockermachine_*-md-*; do
-		machineName=$(jq -r '.metadata.ownerReferences[].name' "$dockerMachine")
-		machineUID=$(get_uid machine "$machineName")
-		# Apply DockerMachine.
-		jq ".metadata.ownerReferences[].uid = \"$machineUID\"" "$dockerMachine" \
-			| remove_unneccessary_fields \
-			| kubectl apply -f -
-		sleep 1
-		dockerMachineName=$(jq -r '.metadata.name' "$dockerMachine")
-		dockerMachineUID=$(get_uid dockermachine "$dockerMachineName")
-
-		# Patch DockerMachine UID in Machine.
-		kubectl patch machine "$machineName" --type='json' -p='[{"op": "replace", "path": "/spec/infrastructureRef/uid", "value":"'"$dockerMachineUID"'"}]'
-	done
+	infra_worker_adoption
 
 	# Unpause MachineDeployment and MachineSet.
 	kubectl annotate machinedeployment "$machineDeploymentName" cluster.x-k8s.io/paused-
@@ -388,7 +363,7 @@ rolling_upgrade_worker() {
 prereqs
 pushd $TMP_PATH/workload-backup/ > /dev/null
 
-case "${1:-""}" in
+case "${COMMAND}" in
 "purge_and_init_mgmt_cluster")
 	purge_and_init_mgmt_cluster
 	;;
@@ -432,4 +407,5 @@ pushd $TMP_PATH/workload-backup/ > /dev/null
 
 kubectl get cluster,dockercluster,kcp,md,ma,dockermachine
 
+popd > /dev/null
 popd > /dev/null
