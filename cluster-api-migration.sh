@@ -8,7 +8,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 CAPI_VERSION=v1.4.2
 KIND_VERSION=v0.18.0
 CALICO_VERSION=v3.24.1
-TMP_PATH=/tmp/capi-adoption
+TMP_PATH=/tmp/capi-migration
 TMP_BIN_PATH=$TMP_PATH/bin
 PATH=$TMP_BIN_PATH/:$PATH
 
@@ -29,9 +29,9 @@ usage() {
 	echo "Commands:"
 	echo "  purge_and_init_mgmt_cluster    Purge and initialize the management cluster."
 	echo "  init_workload_cluster          Initialize a new workload cluster."
-	echo "  adoption_phase_cluster         Perform the adoption phase on a cluster."
-	echo "  adoption_phase_control_plane   Perform the adoption phase on the control plane nodes of a cluster."
-	echo "  adoption_phase_worker          Perform the adoption phase on the worker nodes of a cluster."
+	echo "  migration_phase_cluster         Perform the migration phase on a cluster."
+	echo "  migration_phase_control_plane   Perform the migration phase on the control plane nodes of a cluster."
+	echo "  migration_phase_worker          Perform the migration phase on the worker nodes of a cluster."
 	echo "  rolling_upgrade_control_plane  Perform a rolling upgrade of the control plane of a cluster."
 	echo "  rolling_upgrade_worker         Perform a rolling upgrade of the worker nodes of a cluster."
 	echo
@@ -121,9 +121,9 @@ prereqs() {
 		wget -qO "$TMP_BIN_PATH/kubectl" "https://storage.googleapis.com/kubernetes-release/release/${k8sVersion}/bin/linux/amd64/kubectl"
 	fi
 
-	# Source the infra specific prereqs and adoption functions.
+	# Source the infra specific prereqs and migration functions.
 	source "${SCRIPT_DIR}/providers/${PROVIDER}/prereqs.sh"
-	source "${SCRIPT_DIR}/providers/${PROVIDER}/adoption.sh"
+	source "${SCRIPT_DIR}/providers/${PROVIDER}/migration.sh"
 	infra_prereqs
 }
 
@@ -179,7 +179,7 @@ init_workload_cluster() {
 		done
 }
 
-adoption_phase_cluster() {
+migration_phase_cluster() {
 	echo
 	echo "🐢 We have an orphaned workload cluster now. Let's try to adopt it 🥳️"
 	echo "🐢 Phase 1 - Adopting the Cluster Infrastructure."
@@ -200,12 +200,12 @@ adoption_phase_cluster() {
 		| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/cluster_capi-quickstart.json" \
 		| kubectl apply -f -
 
-	infra_cluster_adoption
+	infra_cluster_migration
 
 	kubectl annotate cluster capi-quickstart cluster.x-k8s.io/paused-
 }
 
-adoption_phase_control_plane() {
+migration_phase_control_plane() {
 	echo
 	echo "🐢 Phase 2 - Adopting the Control Planes."
 	echo
@@ -262,7 +262,7 @@ adoption_phase_control_plane() {
 			| kubectl apply -f -
 	done
 
-	infra_control_plane_adoption
+	infra_control_plane_migration
 
 	# Unpause KubeadmControlPlane.
 	kubectl annotate kubeadmcontrolplane "$kubeadmControlPlaneName" cluster.x-k8s.io/paused-
@@ -270,7 +270,7 @@ adoption_phase_control_plane() {
 	wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | kcp_or_md_ready"
 }
 
-adoption_phase_worker() {
+migration_phase_worker() {
 	echo
 	echo "🐢 Phase 3 - Adopting the MachineDeployment."
 	echo
@@ -324,7 +324,7 @@ adoption_phase_worker() {
 			| kubectl apply -f -
 	done
 
-	infra_worker_adoption
+	infra_worker_migration
 
 	# Unpause MachineDeployment and MachineSet.
 	kubectl annotate machinedeployment "$machineDeploymentName" cluster.x-k8s.io/paused-
@@ -370,14 +370,14 @@ case "${COMMAND}" in
 "init_workload_cluster")
 	init_workload_cluster
 	;;
-"adoption_phase_cluster")
-	adoption_phase_cluster
+"migration_phase_cluster")
+	migration_phase_cluster
 	;;
-"adoption_phase_control_plane")
-	adoption_phase_control_plane
+"migration_phase_control_plane")
+	migration_phase_control_plane
 	;;
-"adoption_phase_worker")
-	adoption_phase_worker
+"migration_phase_worker")
+	migration_phase_worker
 	;;
 "rolling_upgrade_control_plane")
 	rolling_upgrade_control_plane
@@ -389,9 +389,9 @@ case "${COMMAND}" in
 	purge_and_init_mgmt_cluster
 	init_workload_cluster
 	purge_and_init_mgmt_cluster
-	adoption_phase_cluster
-	adoption_phase_control_plane
-	adoption_phase_worker
+	migration_phase_cluster
+	migration_phase_control_plane
+	migration_phase_worker
 	rolling_upgrade_control_plane
 	rolling_upgrade_worker
 	;;

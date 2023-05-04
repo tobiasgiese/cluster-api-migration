@@ -21,7 +21,7 @@ All other prerequisites will be automatically downloaded by the script.
 You can simply run the script locally. Depending on how good the client resources are the script takes about 5-10 minutes.
 
 ```
-./cluster-api-adoption
+./cluster-api-migration
 ```
 
 > Note: currently only the `docker` (CAPD) provider is supported. In future more providers may be added.
@@ -40,8 +40,8 @@ The script has the following stages:
 * create a backup of all CAPI resources of the workload cluster
 * purge and redeploy the CAPI management
     * the state is now gone
-* start the adoption to adopt the orphaned cluster
+* start the migration to adopt the orphaned cluster
     * phase 1: Cluster infrastructure
     * phase 2: KubeadmControlPlane
     * phase 3: MachineDeployment
-* verify the adoption with a rolling upgrade
+* verify the migration with a rolling upgrade

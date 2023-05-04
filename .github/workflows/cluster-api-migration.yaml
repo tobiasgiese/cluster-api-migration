@@ -1,4 +1,4 @@
-name: CAPI Adoption
+name: CAPI Migration
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   docker:
-    name: CAPI Adoption
+    name: CAPI Migration
     runs-on: ubuntu-20.04
     timeout-minutes: 30
     steps:
@@ -25,32 +25,32 @@ jobs:
 
       - name: Create Management Cluster
         run: |
-          ./cluster-api-adoption.sh docker purge_and_init_mgmt_cluster
+          ./cluster-api-migration.sh docker purge_and_init_mgmt_cluster
 
       - name: Create Workload Cluster
         run: |
-          ./cluster-api-adoption.sh docker init_workload_cluster
+          ./cluster-api-migration.sh docker init_workload_cluster
 
       - name: Purge & Create Management Cluster
         run: |
-          ./cluster-api-adoption.sh docker purge_and_init_mgmt_cluster
+          ./cluster-api-migration.sh docker purge_and_init_mgmt_cluster
 
-      - name: Adoption Phase Cluster
+      - name: Migration Phase Cluster
         run: |
-          ./cluster-api-adoption.sh docker adoption_phase_cluster
+          ./cluster-api-migration.sh docker migration_phase_cluster
 
-      - name: Adoption Phase Control Plane
+      - name: Migration Phase Control Plane
         run: |
-          ./cluster-api-adoption.sh docker adoption_phase_control_plane
+          ./cluster-api-migration.sh docker migration_phase_control_plane
 
-      - name: Adoption Phase Worker
+      - name: Migration Phase Worker
         run: |
-          ./cluster-api-adoption.sh docker adoption_phase_worker
+          ./cluster-api-migration.sh docker migration_phase_worker
         
       - name: Rolling Upgrade Control Plane
         run: |
-          ./cluster-api-adoption.sh docker rolling_upgrade_control_plane
+          ./cluster-api-migration.sh docker rolling_upgrade_control_plane
 
       - name: Rolling Upgrade Worker
         run: |
-          ./cluster-api-adoption.sh docker rolling_upgrade_worker
+          ./cluster-api-migration.sh docker rolling_upgrade_worker

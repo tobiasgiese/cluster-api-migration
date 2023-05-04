@@ -1,6 +1,6 @@
 #!/bin/bash
 
-infra_cluster_adoption() {
+infra_cluster_migration() {
 	# Apply DockerCluster
 	add_cluster_owner_reference < dockercluster_* \
 		| remove_unneccessary_fields \
@@ -8,7 +8,7 @@ infra_cluster_adoption() {
 		| kubectl apply -f -
 }
 
-infra_control_plane_adoption() {
+infra_control_plane_migration() {
 	# Apply control plane DockerMachineTemplate.
 	add_cluster_owner_reference < dockermachinetemplate_capi-quickstart-control-plane-* \
 		| remove_unneccessary_fields \
@@ -40,7 +40,7 @@ infra_control_plane_adoption() {
 
 }
 
-infra_worker_adoption() {
+infra_worker_migration() {
 	# Apply control plane DockerMachineTemplate.
 	add_cluster_owner_reference < dockermachinetemplate_capi-quickstart-md-0-infra-* \
 		| remove_unneccessary_fields \
