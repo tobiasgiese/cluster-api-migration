@@ -4,7 +4,7 @@
 2. Install a [kind](https://github.com/kubernetes-sigs/kind) cluster and deploy CAPI with the given infra provider (default: docker).
 3. Initialize a CAPI cluster with `clusterctl generate cluster` and create a backup to have the state.
 4. Delete the kind cluster, which stores the CAPI state. We now have an orphaned cluster that could be installed with some different tools as well (e.g., Terraform, Kops, ...).
-5. Now the adoption comes into place.
+5. Now the migration comes into place.
    1. Phase 1 - Cluster:
       * Apply all necessary secrets, like the kubeconfig, CA, etcd cert, and SA (see: https://cluster-api.sigs.k8s.io/tasks/certs/using-custom-certificates.html).
       * Apply the Cluster with the paused annotation.
@@ -45,4 +45,4 @@
             * Again, you have to add the owner references UID of the Machine.
           * Patch the Machine with the UID of the `DockerMachine` in `spec.infrastructureRef.uid`.
       * Unpause the `MachineSet` and `MachineDeployment`.
-6. After a successful adoption, we are ready to create rolling upgrades of the KubeadmControlPlane and MachineDeployment
+6. After a successful migration, we are ready to create rolling upgrades of the KubeadmControlPlane and MachineDeployment
