@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC1090
+# shellcheck disable=SC1090,SC2002
 
 set -euo pipefail
 
@@ -7,13 +7,17 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 
 CAPI_VERSION=v1.4.2
 KIND_VERSION=v0.18.0
+YQ_VERSION=v4.33.3
 CALICO_VERSION=v3.24.1
+KUBERNETES_VERSION=v1.27.0
 TMP_PATH=/tmp/capi-migration
 TMP_BIN_PATH=$TMP_PATH/bin
 PATH=$TMP_BIN_PATH/:$PATH
 
 PROVIDER=${1:-"docker"}
 COMMAND=${2-""}
+
+PROVIDER_MANIFESTS_DIR="$SCRIPT_DIR/providers/$PROVIDER/manifests"
 
 if [[ ! -d "providers/${PROVIDER}" ]]; then
 	echo "Provider not found: $PROVIDER"
@@ -112,6 +116,12 @@ prereqs() {
 		chmod +x "${kind_location}"
 	fi
 
+	yq_location="$TMP_BIN_PATH/yq"
+	if [[ ! -f "$yq_location" ]]; then
+		wget -qO "${yq_location}" https://github.com/mikefarah/yq/releases/download/$YQ_VERSION/yq_linux_amd64
+		chmod +x "${yq_location}"
+	fi
+
 	# Ensure jq and kubectl binaries if not found. It's not necessary to have a specific version.
 	if ! command -v jq > /dev/null; then
 		wget -qO "$TMP_BIN_PATH/jq" https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64
@@ -149,7 +159,7 @@ init_workload_cluster() {
 	kind delete cluster --name capi-quickstart
 	# And create a new workload cluster.
 	clusterctl generate cluster capi-quickstart --flavor development \
-		--kubernetes-version v1.27.0 \
+		--kubernetes-version $KUBERNETES_VERSION \
 		--control-plane-machine-count=1 \
 		--worker-machine-count=3 | kubectl apply -f -
 	wait_for "kubeconfig to be created" "kubectl get secret capi-quickstart-kubeconfig"
@@ -185,18 +195,34 @@ migration_phase_cluster() {
 	echo "🐢 Phase 1 - Adopting the Cluster Infrastructure."
 
 	# Apply necessary secrets.
-	for secret in kubeconfig ca etcd sa; do
-		remove_unneccessary_fields < "secret_capi-quickstart-${secret}.json" \
-			| remove_owner_reference \
-			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/secret_capi-quickstart-${secret}.json" \
+	for secret in ca etcd sa; do
+		cert=$(jq -r '.data["tls.crt"]' < "secret_capi-quickstart-${secret}.json")
+		key=$(jq -r '.data["tls.key"]' < "secret_capi-quickstart-${secret}.json")
+
+		cat "$SCRIPT_DIR/manifests/secret_cert.yaml" \
+			| yq '.metadata.name = "capi-quickstart-'"$secret"'"' \
+			| yq '.data["tls.crt"] = "'"$cert"'"' \
+			| yq '.data["tls.key"] = "'"$key"'"' \
 			| kubectl apply -f -
 	done
 
+	kubeconfig=$(jq -r '.data.value' < "secret_capi-quickstart-kubeconfig.json")
+	cat "$SCRIPT_DIR/manifests/secret_kubeconfig.yaml" \
+		| yq '.data.value = "'"$kubeconfig"'"' \
+		| kubectl apply -f -
+
+	# Get Cluster info from backup.
+	controlPlaneEndpointHost=$(jq -r ".spec.controlPlaneEndpoint.host" < cluster_capi-quickstart.json)
+	controlPlaneEndpointPort=$(jq -r ".spec.controlPlaneEndpoint.port" < cluster_capi-quickstart.json)
+	podsCidr=$(jq -cr ".spec.clusterNetwork.pods.cidrBlocks" < cluster_capi-quickstart.json)
+	servicesCidr=$(jq -cr ".spec.clusterNetwork.services.cidrBlocks" < cluster_capi-quickstart.json)
+
 	# Apply paused Cluster.
-	jq 'del(.spec.controlPlaneRef)' cluster_capi-quickstart.json \
-		| remove_unneccessary_fields \
-		| add_paused_annotation \
-		| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/cluster_capi-quickstart.json" \
+	cat "$SCRIPT_DIR/manifests/cluster.yaml" \
+		| yq ".spec.clusterNetwork.pods.cidrBlocks = $podsCidr" \
+		| yq ".spec.clusterNetwork.services.cidrBlocks = $servicesCidr" \
+		| yq ".spec.controlPlaneEndpoint.host = \"$controlPlaneEndpointHost\"" \
+		| yq ".spec.controlPlaneEndpoint.port = $controlPlaneEndpointPort" \
 		| kubectl apply -f -
 
 	infra_cluster_migration
@@ -208,65 +234,65 @@ migration_phase_cluster() {
 migration_phase_control_plane() {
 	echo "🐢 Phase 2 - Adopting the Control Planes."
 
-	# Apply control plane kubeadmConfigs.
-	for kubeadmConfig in kubeadmconfig_*; do
-		if [[ "$kubeadmConfig" == *"-md-"* ]]; then
-			continue
-		fi
-		remove_unneccessary_fields < "$kubeadmConfig" \
-			| remove_owner_reference \
-			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${kubeadmConfig}")" \
+	# Get the actual end date from the kubeconfig client cert.
+	kubeconfigClientEndDate=$(kubectl get secret capi-quickstart-kubeconfig -ojson | jq -r '.data.value' | base64 -d | yq -r ".users[].user.client-certificate-data" | base64 -d | openssl x509 -noout -enddate | cut -d= -f2)
+	ceritificatesExpiry=$(date --date="$kubeconfigClientEndDate" "+%Y-%m-%dT%H:%M:%SZ")
+
+	# Get all control plane nodes from the cluster.
+	controlPlaneNodes=$(KUBECONFIG=/tmp/capi-migration/kubeconfig-workloadcluster kubectl get nodes -l node-role.kubernetes.io/control-plane= -oname | cut -d/ -f2)
+
+	# Get control plane information from Cluster.
+	controlPlaneEndpoint=$(kubectl get cluster capi-quickstart -ojson | jq -r '.spec.controlPlaneEndpoint | "\(.host):\(.port)"')
+	podsCidr=$(kubectl get cluster capi-quickstart -ojsonpath='{.spec.clusterNetwork.pods.cidrBlocks[]}')
+	servicesCidr=$(kubectl get cluster capi-quickstart -ojsonpath='{.spec.clusterNetwork.services.cidrBlocks[]}')
+
+	# Apply control plane KubeadmConfigs.
+	for node in $controlPlaneNodes; do
+		cat "$SCRIPT_DIR/manifests/kubeadmconfig_control-plane.yaml" \
+			| yq '.metadata.name = "'"$node"'"' \
+			| yq '.metadata.annotations["machine.cluster.x-k8s.io/certificates-expiry"] = "'"$ceritificatesExpiry"'"' \
+			| yq '.spec.clusterConfiguration.controlPlaneEndpoint = "'"${controlPlaneEndpoint}"'"' \
+			| yq ".spec.clusterConfiguration.networking.podSubnet = \"$podsCidr\"" \
+			| yq ".spec.clusterConfiguration.networking.serviceSubnet = \"$servicesCidr\"" \
 			| kubectl apply -f -
 	done
 
-	# Apply control plane KubeadmConfigTemplates.
-	for kubeadmConfigTemplate in kubeadmconfigtemplate_*; do
-		if [[ "$kubeadmConfigTemplate" == *"-md-"* ]]; then
-			continue
-		fi
-		add_cluster_owner_reference < "$kubeadmConfigTemplate" \
-			| remove_unneccessary_fields \
-			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${kubeadmConfigTemplate}")" \
-			| kubectl apply -f -
-	done
+	# Get Cluster UID.
+	clusterUID=$(get_uid cluster capi-quickstart)
 
-	# Apply paused KubeadmControlPlane.
-	jq 'del(.metadata.annotations["cluster.x-k8s.io/cloned-from-groupkind"], .metadata.annotations["cluster.x-k8s.io/cloned-from-name"])' kubeadmcontrolplane_* \
-		| add_cluster_owner_reference \
-		| remove_unneccessary_fields \
-		| add_paused_annotation \
-		| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/kubeadmcontrolplane.json" \
+	cat "$SCRIPT_DIR/manifests/kubeadmcontrolplane.yaml" \
+		| yq '.metadata.ownerReferences[].uid = "'"$clusterUID"'"' \
 		| kubectl apply -f -
-	sleep 1
-	kubeadmControlPlaneName=$(jq -r '.metadata.name' kubeadmcontrolplane_*)
-	kubeadmControlPlaneUID=$(get_uid kubeadmcontrolplane "$kubeadmControlPlaneName")
 
-	# Patch controlplaneRef in Cluster.
-	kubectl patch cluster capi-quickstart --type='json' -p='[{"op": "replace", "path": "/spec/controlPlaneRef", "value":{"apiVersion":"controlplane.cluster.x-k8s.io/v1beta1","kind":"KubeadmControlPlane","name":"'"$kubeadmControlPlaneName"'","namespace":"default"}}]'
-
+	# Patch controlplaneRef name in Cluster.
+	# kubectl patch cluster capi-quickstart --type='json' -p='[{"op": "replace", "path": "/spec/controlPlaneRef", "value": {"apiVersion": "controlplane.cluster.x-k8s.io/v1beta1", "kind": "KubeadmControlPlane", name: "'"$kubeadmControlPlaneName"'", "namespace": "default"}}]'
 	# Create secret-dummy. This secret is needed during node bootstrap and includes the cloud-init data.
 	kubectl create secret generic secret-dummy || true
 
+	# Get KubeadmControlPlane UID.
+	kubeadmControlPlaneUID=$(get_uid kubeadmcontrolplane capi-quickstart)
+
 	# Apply paused control plane Machines.
-	for machine in machine_*; do
-		if [[ "$machine" == *"-md-"* ]]; then
-			continue
-		fi
-		kubeadmConfigName=$(jq -r '.spec.bootstrap.configRef.name' "${machine}")
-		kubeadmConfigUID=$(kubectl get kubeadmconfig "$kubeadmConfigName" -ojsonpath='{.metadata.uid}')
-		jq ".metadata.ownerReferences[].uid = \"$kubeadmControlPlaneUID\"" "$machine" \
-			| jq '.spec.bootstrap.configRef.uid = "'"$kubeadmConfigUID"'"' \
-			| jq '.spec.bootstrap.dataSecretName = "secret-dummy"' \
-			| remove_unneccessary_fields \
-			| add_paused_annotation \
-			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${machine}")" \
+	for node in $controlPlaneNodes; do
+		kubeadmConfigUID=$(get_uid kubeadmconfig "$node")
+
+		# Get provider ID from backup. If you are trying to migrate a legacy cluster you have to get this somewhere else.
+		providerID=$(jq -r '.spec.providerID' "machine_$node.json")
+
+		cat "$SCRIPT_DIR/manifests/machine_control-plane.yaml" \
+			| yq '.metadata.name = "'"$node"'"' \
+			| yq '.metadata.ownerReferences[].uid = "'"$kubeadmControlPlaneUID"'"' \
+			| yq '.spec.bootstrap.configRef.name = "'"$node"'"' \
+			| yq '.spec.bootstrap.configRef.uid = "'"$kubeadmConfigUID"'"' \
+			| yq '.spec.infrastructureRef.name = "'"$node"'"' \
+			| yq '.spec.providerID = "'"$providerID"'"' \
 			| kubectl apply -f -
 	done
 
 	infra_control_plane_migration
 
 	# Unpause KubeadmControlPlane.
-	kubectl annotate kubeadmcontrolplane "$kubeadmControlPlaneName" cluster.x-k8s.io/paused-
+	kubectl annotate kubeadmcontrolplane capi-quickstart cluster.x-k8s.io/paused-
 
 	wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | kcp_or_md_ready"
 
@@ -276,52 +302,68 @@ migration_phase_control_plane() {
 migration_phase_worker() {
 	echo "🐢 Phase 3 - Adopting the MachineDeployment."
 
-	# Apply worker kubeadmConfigs.
-	for kubeadmConfig in kubeadmconfig_*-md-*; do
-		remove_unneccessary_fields < "$kubeadmConfig" \
-			| remove_owner_reference \
-			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${kubeadmConfig}")" \
+	# Get all worker nodes from the cluster.
+	workerNodes=$(KUBECONFIG=/tmp/capi-migration/kubeconfig-workloadcluster kubectl get nodes -l node-role.kubernetes.io/control-plane!= -oname | cut -d/ -f2)
+
+	# Get MachineSet name by removing everything after the last dash of a random Pod.
+	# Note: this must be done manually if your node names are different to these from CAPI.
+	randomWorkerNodeName=$(KUBECONFIG=/tmp/capi-migration/kubeconfig-workloadcluster kubectl get nodes -l node-role.kubernetes.io/control-plane!= -oname | cut -d/ -f2 | head -n1)
+	machineSetName=${randomWorkerNodeName%-*}
+	# The same for the MachineDeployment name. Just calculate it from the MachineSet.
+	machineDeploymentName=${machineSetName%-*}
+
+	# Apply control plane KubeadmConfigs.
+	for node in $workerNodes; do
+		cat "$SCRIPT_DIR/manifests/kubeadmconfig_control-plane.yaml" \
+			| yq '.metadata.name = "'"$node"'"' \
+			| yq '.metadata.annotations["cluster.x-k8s.io/set-name"] = "'"$machineSetName"'"' \
+			| yq '.metadata.annotations["cluster.x-k8s.io/deployment-name"] = "'"$machineDeploymentName"'"' \
 			| kubectl apply -f -
 	done
 
-	# Apply worker KubeadmConfigTemplates.
-	for kubeadmConfigTemplate in kubeadmconfigtemplate_*-md-*; do
-		add_cluster_owner_reference < "$kubeadmConfigTemplate" \
-			| remove_unneccessary_fields \
-			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${kubeadmConfigTemplate}")" \
-			| kubectl apply -f -
-	done
+	clusterUID=$(get_uid cluster capi-quickstart)
+	kubeadmConfigTemplateName=$machineDeploymentName
+
+	# Apply KubeadmConfigTemplate.
+	cat "$SCRIPT_DIR/manifests/kubeadmconfigtemplate.yaml" \
+		| yq '.metadata.name = "'"$kubeadmConfigTemplateName"'"' \
+		| yq '.metadata.ownerReferences[].uid = "'"$clusterUID"'"' \
+		| kubectl apply -f -
 
 	# Apply paused MachineDeployment.
-	for machineDeployment in machinedeployment_*; do
-		add_cluster_owner_reference < "$machineDeployment" \
-			| remove_unneccessary_fields \
-			| add_paused_annotation \
-			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${machineDeployment}")" \
-			| kubectl apply -f -
-	done
+	cat "$SCRIPT_DIR/manifests/machinedeployment.yaml" \
+		| yq '.metadata.name = "'"$machineDeploymentName"'"' \
+		| yq '.metadata.ownerReferences[].uid = "'"$clusterUID"'"' \
+		| yq '.spec.template.spec.bootstrap.configRef.name = "'"$kubeadmConfigTemplateName"'"' \
+		| kubectl apply -f -
 	sleep 1
-	machineDeploymentName=$(jq -r '.metadata.name' machinedeployment_*)
 	machineDeploymentUID=$(get_uid machinedeployment "$machineDeploymentName")
 
 	# Apply Machineset.
-	for machineSet in machineset_*; do
-		jq ".metadata.ownerReferences[].uid = \"$machineDeploymentUID\"" "$machineSet" \
-			| remove_unneccessary_fields \
-			| add_paused_annotation \
-			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${machineSet}")" \
-			| kubectl apply -f -
-	done
+	cat "$SCRIPT_DIR/manifests/machineset.yaml" \
+		| yq '.metadata.name = "'"$machineSetName"'"' \
+		| yq '.metadata.ownerReferences[].uid = "'"$machineDeploymentUID"'"' \
+		| yq '.metadata.ownerReferences[].name = "'"$machineDeploymentName"'"' \
+		| yq '.spec.template.spec.bootstrap.configRef.name = "'"$kubeadmConfigTemplateName"'"' \
+		| kubectl apply -f -
 	sleep 1
-	machineSetName=$(jq -r '.metadata.name' machineset_*)
 	machineSetUID=$(get_uid machineset "$machineSetName")
 
-	# Apply paused worker Machines.
-	for machine in machine_*-md-*; do
-		jq ".metadata.ownerReferences[].uid = \"$machineSetUID\"" "$machine" \
-			| jq '.spec.bootstrap.dataSecretName = "secret-dummy"' \
-			| remove_unneccessary_fields \
-			| tee "${SCRIPT_DIR}/providers/${PROVIDER}/output/$(basename "${machine}")" \
+	# Apply worker KubeadmConfigs and Machines.
+	for node in $workerNodes; do
+		kubeadmConfigUID=$(get_uid kubeadmconfig "$node")
+
+		# Get provider ID from backup. If you are trying to migrate a legacy cluster you have to get this somewhere else.
+		providerID=$(jq -r '.spec.providerID' "machine_$node.json")
+
+		cat "$SCRIPT_DIR/manifests/machine_worker.yaml" \
+			| yq '.metadata.name = "'"$node"'"' \
+			| yq '.metadata.ownerReferences[].uid = "'"$machineSetUID"'"' \
+			| yq '.metadata.ownerReferences[].name = "'"$machineSetName"'"' \
+			| yq '.spec.bootstrap.configRef.name = "'"$node"'"' \
+			| yq '.spec.bootstrap.configRef.uid = "'"$kubeadmConfigUID"'"' \
+			| yq '.spec.infrastructureRef.name = "'"$node"'"' \
+			| yq '.spec.providerID = "'"$providerID"'"' \
 			| kubectl apply -f -
 	done
 

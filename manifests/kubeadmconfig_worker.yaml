@@ -1,0 +1,25 @@
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+kind: KubeadmConfig
+metadata:
+  labels:
+    cluster.x-k8s.io/cluster-name: capi-quickstart
+    cluster.x-k8s.io/deployment-name: capi-quickstart-md-0
+    cluster.x-k8s.io/set-name: capi-quickstart-md-0-twm2k-68f67bf46x66dxq
+    machine-template-hash: migration
+  name: capi-quickstart-md-0-bootstrap-9888f-zjfv9
+  namespace: default
+spec:
+  format: cloud-config
+  # We don't need this configuration anymore as the worker nodes have joined already.
+  # joinConfiguration:
+  #   discovery:
+  #     bootstrapToken:
+  #       apiServerEndpoint: 172.19.0.4:6443
+  #       caCertHashes:
+  #         - sha256:ea1ead066144988e3cdd9912470de557f17543c91087faad0b5dceebd9280c4a
+  #       token: ckvdds.6vsj4netzcoj56a2
+  #   nodeRegistration:
+  #     criSocket: unix:///var/run/containerd/containerd.sock
+  #     imagePullPolicy: IfNotPresent
+  #     kubeletExtraArgs:
+  #       eviction-hard: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%

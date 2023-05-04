@@ -1,0 +1,70 @@
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+kind: KubeadmConfig
+metadata:
+  annotations:
+    machine.cluster.x-k8s.io/certificates-expiry: "2024-05-03T13:41:01Z"
+  labels:
+    cluster.x-k8s.io/cluster-name: capi-quickstart
+    cluster.x-k8s.io/control-plane: ""
+    cluster.x-k8s.io/control-plane-name: capi-quickstart
+  name: capi-quickstart-w5jbn-rv4bd
+  namespace: default
+spec:
+  clusterConfiguration:
+    apiServer:
+      certSANs:
+        - localhost
+        - 127.0.0.1
+        - 0.0.0.0
+        - host.docker.internal
+      extraArgs:
+        admission-control-config-file: /etc/kubernetes/kube-apiserver-admission-pss.yaml
+      extraVolumes:
+        - hostPath: /etc/kubernetes/kube-apiserver-admission-pss.yaml
+          mountPath: /etc/kubernetes/kube-apiserver-admission-pss.yaml
+          name: admission-pss
+          pathType: File
+          readOnly: true
+    clusterName: capi-quickstart
+    controlPlaneEndpoint: 172.19.0.4:6443
+    controllerManager:
+      extraArgs:
+        enable-hostpath-provisioner: "true"
+    dns: {}
+    etcd:
+      local: {}
+    kubernetesVersion: v1.27.0
+    networking:
+      dnsDomain: cluster.local
+      podSubnet: 192.168.0.0/16
+      serviceSubnet: 10.128.0.0/12
+    scheduler: {}
+  files:
+    - content: |
+        apiVersion: apiserver.config.k8s.io/v1
+        kind: AdmissionConfiguration
+        plugins:
+        - name: PodSecurity
+          configuration:
+            apiVersion: pod-security.admission.config.k8s.io/v1
+            kind: PodSecurityConfiguration
+            defaults:
+              enforce: "baseline"
+              enforce-version: "latest"
+              audit: "restricted"
+              audit-version: "latest"
+              warn: "restricted"
+              warn-version: "latest"
+            exemptions:
+              usernames: []
+              runtimeClasses: []
+              namespaces: [kube-system]
+      path: /etc/kubernetes/kube-apiserver-admission-pss.yaml
+  format: cloud-config
+  initConfiguration:
+    localAPIEndpoint: {}
+    nodeRegistration:
+      criSocket: unix:///var/run/containerd/containerd.sock
+      imagePullPolicy: IfNotPresent
+      kubeletExtraArgs:
+        eviction-hard: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%

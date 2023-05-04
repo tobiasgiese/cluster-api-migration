@@ -1,0 +1,35 @@
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Machine
+metadata:
+  labels:
+    cluster.x-k8s.io/cluster-name: capi-quickstart
+    cluster.x-k8s.io/control-plane: ""
+    cluster.x-k8s.io/control-plane-name: capi-quickstart
+  name: capi-quickstart-w5jbn-k2hct
+  namespace: default
+  ownerReferences:
+    - apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+      blockOwnerDeletion: true
+      controller: true
+      kind: KubeadmControlPlane
+      name: capi-quickstart
+      uid: b7ad641a-46a3-4c0a-b619-69b407dbe919
+spec:
+  bootstrap:
+    configRef:
+      apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+      kind: KubeadmConfig
+      name: capi-quickstart-w5jbn-rv4bd
+      namespace: default
+      uid: c517af71-4762-4921-baf5-a27fb459a81d
+    dataSecretName: secret-dummy
+  clusterName: capi-quickstart
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: InfraMachine
+    name: capi-quickstart-control-plane-wz4w2-8lcgx
+    namespace: default
+    uid: 9660719a-f54a-40b7-9401-4e33c36fb52f
+  nodeDeletionTimeout: 10s
+  providerID: docker:////capi-quickstart-w5jbn-k2hct
+  version: v1.27.0
