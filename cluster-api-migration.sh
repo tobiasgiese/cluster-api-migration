@@ -170,6 +170,7 @@ init_workload_cluster() {
 	wait_for "MachineDeployment to be ready" "kubectl get md -ojson | kcp_or_md_ready"
 
 	rm -f $TMP_PATH/workload-backup/*
+	rm -f $SCRIPT_DIR/providers/$PROVIDER/output/*
 	echo "🐢 Creating backup for..."
 	kubectl get "secret,$(kubectl api-resources -oname | grep cluster.x-k8s.io | cut -d. -f1 | xargs | sed 's/ /,/g')" -oname \
 		| while IFS=/ read -r kind name; do
@@ -180,10 +181,8 @@ init_workload_cluster() {
 }
 
 migration_phase_cluster() {
-	echo
 	echo "🐢 We have an orphaned workload cluster now. Let's try to adopt it 🥳️"
 	echo "🐢 Phase 1 - Adopting the Cluster Infrastructure."
-	echo
 
 	# Apply necessary secrets.
 	for secret in kubeconfig ca etcd sa; do
@@ -203,12 +202,11 @@ migration_phase_cluster() {
 	infra_cluster_migration
 
 	kubectl annotate cluster capi-quickstart cluster.x-k8s.io/paused-
+	clusterctl describe cluster capi-quickstart -n default --grouping=false --show-conditions=all
 }
 
 migration_phase_control_plane() {
-	echo
 	echo "🐢 Phase 2 - Adopting the Control Planes."
-	echo
 
 	# Apply control plane kubeadmConfigs.
 	for kubeadmConfig in kubeadmconfig_*; do
@@ -243,6 +241,9 @@ migration_phase_control_plane() {
 	kubeadmControlPlaneName=$(jq -r '.metadata.name' kubeadmcontrolplane_*)
 	kubeadmControlPlaneUID=$(get_uid kubeadmcontrolplane "$kubeadmControlPlaneName")
 
+	# Patch controlplaneRef in Cluster.
+	kubectl patch cluster capi-quickstart --type='json' -p='[{"op": "replace", "path": "/spec/controlPlaneRef", "value":{"apiVersion":"controlplane.cluster.x-k8s.io/v1beta1","kind":"KubeadmControlPlane","name":"'"$kubeadmControlPlaneName"'","namespace":"default"}}]'
+
 	# Create secret-dummy. This secret is needed during node bootstrap and includes the cloud-init data.
 	kubectl create secret generic secret-dummy || true
 
@@ -268,12 +269,12 @@ migration_phase_control_plane() {
 	kubectl annotate kubeadmcontrolplane "$kubeadmControlPlaneName" cluster.x-k8s.io/paused-
 
 	wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | kcp_or_md_ready"
+
+	clusterctl describe cluster capi-quickstart -n default --grouping=false --show-conditions=all
 }
 
 migration_phase_worker() {
-	echo
 	echo "🐢 Phase 3 - Adopting the MachineDeployment."
-	echo
 
 	# Apply worker kubeadmConfigs.
 	for kubeadmConfig in kubeadmconfig_*-md-*; do
@@ -332,15 +333,12 @@ migration_phase_worker() {
 
 	wait_for "MachineDeployment to be ready" "kubectl get md -ojson | kcp_or_md_ready"
 
-	echo
+	clusterctl describe cluster capi-quickstart -n default --grouping=false --show-conditions=all
 	echo "🐢 Done! The orphaned cluster has been successfully migraed into Cluster API - wihtout any replacement of the nodes!"
-	echo
 }
 
 rolling_upgrade_control_plane() {
-	echo
 	echo "🐢 Starting rolling upgrade for the control plane nodes."
-	echo
 	clusterctl alpha rollout restart "kubeadmcontrolplane/$(kubectl get kcp -ojson | jq -r '.items[].metadata.name')"
 	# Wait a few seconds to let the rolling upgrade begin.
 	sleep 5
@@ -348,9 +346,7 @@ rolling_upgrade_control_plane() {
 }
 
 rolling_upgrade_worker() {
-	echo
 	echo "🐢 Starting rolling upgrade for the worker nodes."
-	echo
 	machineDeploymentName=$(kubectl get md -ojson | jq -r '.items[].metadata.name')
 	# Patch maxSurge and maxUnavailable to 3 to add and remove all 3 worker nodes at once.
 	kubectl patch machinedeployment "$machineDeploymentName" --type='json' -p='[{"op": "replace", "path": "/spec/strategy/rollingUpdate", "value":{"maxSurge": 3, "maxUnavailable": 3}}]'
@@ -404,8 +400,6 @@ case "${COMMAND}" in
 esac
 
 pushd $TMP_PATH/workload-backup/ > /dev/null
-
-kubectl get cluster,dockercluster,kcp,md,ma,dockermachine
 
 popd > /dev/null
 popd > /dev/null
