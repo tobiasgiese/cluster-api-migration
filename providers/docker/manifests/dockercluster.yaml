@@ -1,0 +1,19 @@
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: DockerCluster
+metadata:
+  labels:
+    cluster.x-k8s.io/cluster-name: capi-quickstart
+  name: capi-quickstart
+  namespace: default
+  ownerReferences:
+    - apiVersion: cluster.x-k8s.io/v1beta1
+      blockOwnerDeletion: true
+      controller: true
+      kind: Cluster
+      name: capi-quickstart
+      uid: tbd
+spec:
+  controlPlaneEndpoint:
+    host: tbd
+    port: 6443
+  loadBalancer: {}

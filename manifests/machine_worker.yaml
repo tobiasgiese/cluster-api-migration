@@ -1,0 +1,36 @@
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Machine
+metadata:
+  labels:
+    cluster.x-k8s.io/cluster-name: capi-quickstart
+    cluster.x-k8s.io/deployment-name: capi-quickstart-md
+    cluster.x-k8s.io/set-name: capi-quickstart-md-0-twm2k-68f67bf46x66dxq
+    machine-template-hash: migration
+  name: capi-quickstart-md-0-twm2k-68f67bf46x66dxq-jgx9d
+  namespace: default
+  ownerReferences:
+    - apiVersion: cluster.x-k8s.io/v1beta1
+      blockOwnerDeletion: true
+      controller: true
+      kind: MachineSet
+      name: capi-quickstart-md-0-twm2k-68f67bf46x66dxq
+      uid: f2d7439e-1ad2-417f-9d42-c8a42fbebfee
+spec:
+  bootstrap:
+    configRef:
+      apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+      kind: KubeadmConfig
+      name: capi-quickstart-md-0-bootstrap-9888f-zjfv9
+      namespace: default
+      uid: d2ec1515-65fd-4f5f-b8b2-2b55ebe9344a
+    dataSecretName: secret-dummy
+  clusterName: capi-quickstart
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: InfraMachine
+    name: capi-quickstart-md-0-infra-2g2dh-82t8b
+    namespace: default
+    uid: 02e2f6b0-0c3d-4ac8-be4c-7be22e06c856
+  nodeDeletionTimeout: 10s
+  providerID: docker:////capi-quickstart-md-0-twm2k-68f67bf46x66dxq-jgx9d
+  version: v1.27.0

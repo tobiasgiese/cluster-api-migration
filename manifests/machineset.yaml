@@ -1,0 +1,48 @@
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineSet
+metadata:
+  annotations:
+    machinedeployment.clusters.x-k8s.io/desired-replicas: "3"
+    machinedeployment.clusters.x-k8s.io/max-replicas: "4"
+    machinedeployment.clusters.x-k8s.io/revision: "1"
+    cluster.x-k8s.io/paused: "true"
+  labels:
+    cluster.x-k8s.io/cluster-name: capi-quickstart
+    cluster.x-k8s.io/deployment-name: capi-quickstart-md-0-twm2k
+    machine-template-hash: migration
+  name: capi-quickstart-md-0-twm2k-68f67bf46x66dxq
+  namespace: default
+  ownerReferences:
+    - apiVersion: cluster.x-k8s.io/v1beta1
+      blockOwnerDeletion: true
+      controller: true
+      kind: MachineDeployment
+      name: capi-quickstart-md-0-twm2k
+      uid: 71ddb1d2-1d75-4f5d-94ac-48253b4c3327
+spec:
+  clusterName: capi-quickstart
+  deletePolicy: Random
+  replicas: 3
+  selector:
+    matchLabels:
+      cluster.x-k8s.io/cluster-name: capi-quickstart
+      machine-template-hash: migration
+  template:
+    metadata:
+      labels:
+        cluster.x-k8s.io/cluster-name: capi-quickstart
+        machine-template-hash: migration
+    spec:
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+          kind: KubeadmConfigTemplate
+          name: capi-quickstart-md-0-bootstrap-9888f
+          namespace: default
+      clusterName: capi-quickstart
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: InfraMachineTemplate
+        name: capi-quickstart
+        namespace: default
+      version: v1.27.0
