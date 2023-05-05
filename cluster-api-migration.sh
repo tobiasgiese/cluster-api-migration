@@ -73,6 +73,8 @@ prereqs() {
 		exit 1
 	fi
 
+	echo "🐢 Downloading prereqs."
+
 	mkdir -p "$TMP_BIN_PATH"
 	mkdir -p $TMP_PATH/workload-backup
 
@@ -99,10 +101,12 @@ prereqs() {
 	# Ensure jq and kubectl binaries if not found. It's not necessary to have a specific version.
 	if ! command -v jq > /dev/null; then
 		wget -qO "$TMP_BIN_PATH/jq" https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64
+		chmod +x "$TMP_BIN_PATH/jq"
 	fi
 	if ! command -v kubectl > /dev/null; then
 		k8sVersion=$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
 		wget -qO "$TMP_BIN_PATH/kubectl" "https://storage.googleapis.com/kubernetes-release/release/${k8sVersion}/bin/linux/amd64/kubectl"
+		chmod +x "$TMP_BIN_PATH/kubectl"
 	fi
 
 	# Source the infra specific prereqs and migration functions.
