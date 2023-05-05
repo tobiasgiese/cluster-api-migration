@@ -49,6 +49,6 @@ The script has the following stages:
 
 I would like to thank the following people:
 
-- Stefan Büringer (@sbueringer) for the initial idea of migrating unmanaged clusters to Cluster API.
-- Christian Schlotter (@chrischdi) for helping with the implementation of the migration.
+- Stefan Büringer ([@sbueringer](https://github.com/sbueringer)) for the initial idea of migrating unmanaged clusters to Cluster API.
+- Christian Schlotter ([@chrischdi](https://github.com/chrischdi)) for helping with the implementation of the migration.
 - And last but not least the complete Kubernetes platform team at @mercedes-benz
