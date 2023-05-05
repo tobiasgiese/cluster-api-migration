@@ -18,6 +18,7 @@ The following tools are required but will be downloaded to the tmp directory if 
 * [jq](https://github.com/stedolan/jq)
 * [yq](https://github.com/mikefarah/yq)
 * kubectl
+* curl (will not be downloaded automatically)
 
 ## Usage
 
