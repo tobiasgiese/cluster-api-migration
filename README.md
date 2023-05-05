@@ -12,7 +12,9 @@ The approach is about the following talk from the KubeCon + CloudNativeCon 2022 
 The following tools are required before running the script:
 
 * [jq](https://github.com/stedolan/jq)
+* [yq](https://github.com/mikefarah/yq)
 * kubectl
+* 
 
 All other prerequisites will be automatically downloaded by the script.
 

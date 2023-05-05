@@ -30,12 +30,15 @@ usage() {
 	echo
 	echo "Example: $0 docker purge_and_init_mgmt_cluster"
 	echo
+	echo "Providers:"
+	echo "  docker (default)"
+	echo
 	echo "Commands:"
 	echo "  purge_and_init_mgmt_cluster    Purge and initialize the management cluster."
 	echo "  init_workload_cluster          Initialize a new workload cluster."
-	echo "  migration_phase_cluster         Perform the migration phase on a cluster."
-	echo "  migration_phase_control_plane   Perform the migration phase on the control plane nodes of a cluster."
-	echo "  migration_phase_worker          Perform the migration phase on the worker nodes of a cluster."
+	echo "  migration_phase_cluster        Perform the migration phase on a cluster."
+	echo "  migration_phase_control_plane  Perform the migration phase on the control plane nodes of a cluster."
+	echo "  migration_phase_worker         Perform the migration phase on the worker nodes of a cluster."
 	echo "  rolling_upgrade_control_plane  Perform a rolling upgrade of the control plane of a cluster."
 	echo "  rolling_upgrade_worker         Perform a rolling upgrade of the worker nodes of a cluster."
 	echo
@@ -74,7 +77,7 @@ prereqs() {
 
 	clusterctl_location="$TMP_BIN_PATH/clusterctl"
 	if [[ ! -f "${clusterctl_location}" ]]; then
-		wget -qO "${clusterctl_location}" https://github.com/kubernetes-sigs/cluster-api/releases/download/${CAPI_VERSION}/clusterctl-linux-amd64
+		wget -qO "${clusterctl_location}" https://github.com/kubernetes-sigs/cluster-api/releases/download/$CAPI_VERSION/clusterctl-linux-amd64
 		chmod +x "${clusterctl_location}"
 	fi
 
@@ -84,10 +87,12 @@ prereqs() {
 		chmod +x "${kind_location}"
 	fi
 
-	yq_location="$TMP_BIN_PATH/yq"
-	if [[ ! -f "$yq_location" ]]; then
-		wget -qO "${yq_location}" https://github.com/mikefarah/yq/releases/download/$YQ_VERSION/yq_linux_amd64
-		chmod +x "${yq_location}"
+	if ! command -v yq > /dev/null || file $(which yq) | grep -qi python; then
+		yq_location="$TMP_BIN_PATH/yq"
+		if [[ ! -f "$yq_location" ]]; then
+			wget -qO "${yq_location}" https://github.com/mikefarah/yq/releases/download/$YQ_VERSION/yq_linux_amd64
+			chmod +x "${yq_location}"
+		fi
 	fi
 
 	# Ensure jq and kubectl binaries if not found. It's not necessary to have a specific version.
