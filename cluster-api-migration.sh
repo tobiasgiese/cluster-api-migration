@@ -50,40 +50,8 @@ wait_for() {
 	echo
 }
 
-add_paused_annotation() {
-	jq '.metadata.annotations["cluster.x-k8s.io/paused"] = "true"'
-}
-
-remove_unneccessary_fields() {
-	jq 'del(
-        .status,
-        .spec.topology,
-        .metadata.resourceVersion,
-        .metadata.uid,
-        .metadata.finalizers,
-        .metadata.generation,
-        .metadata.creationTimestamp,
-        .metadata.labels["topology.cluster.x-k8s.io/owned"],
-        .metadata.labels["topology.cluster.x-k8s.io/deployment-name"],
-        .spec.machineTemplate.metadata.labels["topology.cluster.x-k8s.io/owned"],
-        .spec.machineTemplate.metadata.labels["topology.cluster.x-k8s.io/deployment-name"],
-        .spec.template.metadata.labels["topology.cluster.x-k8s.io/owned"],
-        .spec.template.metadata.labels["topology.cluster.x-k8s.io/deployment-name"],
-        .spec.selector.matchLabels["topology.cluster.x-k8s.io/owned"],
-        .spec.selector.matchLabels["topology.cluster.x-k8s.io/deployment-name"]
-    )'
-}
-
-remove_owner_reference() {
-	jq 'del(.metadata.ownerReferences)'
-}
-
 get_uid() {
 	kubectl get "$1" "$2" -ojsonpath='{.metadata.uid}'
-}
-
-add_cluster_owner_reference() {
-	jq ".metadata.ownerReferences[].uid = \"$(get_uid cluster capi-quickstart)\""
 }
 
 kcp_or_md_ready() {
