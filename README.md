@@ -7,7 +7,7 @@ This repository is a proof of concept that demonstrates how to adopt Kubernetes 
 This approach is about the following talk from the KubeCon + CloudNativeCon 2022 in Valencia:  
 [How to Migrate 700 Kubernetes Clusters to Cluster API with Zero Downtime](https://kccnceu2022.sched.com/event/yttp/)
 
-To test the migration a unmanaged cluster is necessary. To achieve this in a scripted solution we can easily use the [CAPI Quick Start](https://cluster-api.sigs.k8s.io/user/quick-start.html) - which deploys a workload cluster - and delete the CAPI managemnt cluster afterwards. This ensures that no state is present of the workload cluster.
+To test the migration a unmanaged cluster is necessary. To achieve this in a scripted solution we can easily use the [CAPI Quick Start](https://cluster-api.sigs.k8s.io/user/quick-start.html) - which deploys a workload cluster - and delete the CAPI management cluster afterwards. This ensures that no state is present of the workload cluster.
 
 Disclaimer: If you want to test this with your own clusters keep in mind that each provider has different requirements. Some rely on the resource names (e.g., CAPO), others use IDs (e.g., CAPA) to identify resources.
 
