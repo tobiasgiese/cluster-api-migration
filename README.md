@@ -30,8 +30,6 @@ After a successful run the generated manifests are stored in `providers/<chosen 
 
 ### Script Stages
 
-There is a detailed description of all stages in the [script-stages.md](script-stages.md)
-
 The script has the following stages:
 
 * install prereqs
