@@ -7,13 +7,6 @@ metadata:
     cluster.x-k8s.io/cluster-name: capi-quickstart
   name: capi-quickstart
   namespace: default
-  ownerReferences:
-    - apiVersion: cluster.x-k8s.io/v1beta1
-      blockOwnerDeletion: true
-      controller: true
-      kind: Cluster
-      name: capi-quickstart
-      uid: 42a44d23-e3fa-49a2-bb4e-0dd3c819a6f1
 spec:
   kubeadmConfigSpec:
     clusterConfiguration:

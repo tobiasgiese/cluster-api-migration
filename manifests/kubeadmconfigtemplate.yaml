@@ -5,11 +5,6 @@ metadata:
     cluster.x-k8s.io/cluster-name: capi-quickstart
   name: capi-quickstart-md-0-bootstrap-9888f
   namespace: default
-  ownerReferences:
-    - apiVersion: cluster.x-k8s.io/v1beta1
-      kind: Cluster
-      name: capi-quickstart
-      uid: 42a44d23-e3fa-49a2-bb4e-0dd3c819a6f1
 spec:
   template:
     metadata: {}

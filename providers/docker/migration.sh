@@ -4,7 +4,6 @@
 infra_cluster_migration() {
 	# Apply DockerCluster
 	cat "$PROVIDER_MANIFESTS_DIR/dockercluster.yaml" \
-		| yq ".metadata.ownerReferences[].uid = \"$(get_uid cluster capi-quickstart)\"" \
 		| yq ".spec.controlPlaneEndpoint.host = \"$controlPlaneEndpointHost\"" \
 		| yq ".spec.controlPlaneEndpoint.port = $controlPlaneEndpointPort" \
 		| kubectl apply -f -
@@ -12,7 +11,6 @@ infra_cluster_migration() {
 
 infra_control_plane_migration() {
 	cat "$PROVIDER_MANIFESTS_DIR/dockermachinetemplate.yaml" \
-		| yq '.metadata.ownerReferences[].uid = "'"$clusterUID"'"' \
 		| kubectl apply -f -
 
 	# Patch KubeadmControlPlane machine template kind to DockerMachineTemplate.
@@ -27,8 +25,6 @@ infra_control_plane_migration() {
 
 		cat "$PROVIDER_MANIFESTS_DIR/dockermachine.yaml" \
 			| yq '.metadata.name = "'"$node"'"' \
-			| yq '.metadata.ownerReferences[].name = "'"$node"'"' \
-			| yq '.metadata.ownerReferences[].uid = "'"$machineUID"'"' \
 			| yq '.spec.providerID = "'"$providerID"'"' \
 			| yq '.spec.customImage = "kindest/node:'"$KUBERNETES_VERSION"'"' \
 			| kubectl apply -f -
@@ -44,7 +40,6 @@ infra_control_plane_migration() {
 infra_worker_migration() {
 	# Apply control plane DockerMachineTemplate.
 	cat "$PROVIDER_MANIFESTS_DIR/dockermachinetemplate.yaml" \
-		| yq '.metadata.ownerReferences[].uid = "'"$clusterUID"'"' \
 		| kubectl apply -f -
 
 	# Patch MachineSet and MachineDeployment machine template kind to DockerMachineTemplate.
@@ -61,8 +56,6 @@ infra_worker_migration() {
 		cat "$PROVIDER_MANIFESTS_DIR/dockermachine.yaml" \
 			| yq '.metadata.name = "'"$node"'"' \
 			| yq '.metadata.annotations["cluster.x-k8s.io/deployment-name"] = "'"$machineDeploymentName"'"' \
-			| yq '.metadata.ownerReferences[].name = "'"$node"'"' \
-			| yq '.metadata.ownerReferences[].uid = "'"$machineUID"'"' \
 			| yq '.spec.providerID = "'"$providerID"'"' \
 			| yq '.spec.customImage = "kindest/node:'"$KUBERNETES_VERSION"'"' \
 			| kubectl apply -f -

@@ -1,8 +1,6 @@
 apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
 kind: KubeadmConfig
 metadata:
-  annotations:
-    machine.cluster.x-k8s.io/certificates-expiry: "2024-05-03T13:41:01Z"
   labels:
     cluster.x-k8s.io/cluster-name: capi-quickstart
     cluster.x-k8s.io/control-plane: ""

@@ -16,6 +16,7 @@ PATH=$TMP_BIN_PATH/:$PATH
 
 PROVIDER=${1:-"docker"}
 COMMAND=${2-""}
+FORCE=${FORCE:-"false"}
 
 PROVIDER_MANIFESTS_DIR="$SCRIPT_DIR/providers/$PROVIDER/manifests"
 
@@ -114,17 +115,21 @@ purge_and_init_mgmt_cluster() {
 	# Delete cluster first.
 	kind delete cluster --name capi-test
 
-	# Init CAPD cluster.
-	curl -s https://raw.githubusercontent.com/kubernetes-sigs/cluster-api/$CAPI_VERSION/hack/kind-install-for-capd.sh | bash
+	# Init management kind cluster.
+	cat <<- EOF | kind create cluster --name="capi-test" --config=-
+		kind: Cluster
+		apiVersion: kind.x-k8s.io/v1alpha4
+		nodes:
+		- role: control-plane
+		  extraMounts:
+		    - hostPath: /var/run/docker.sock
+		      containerPath: /var/run/docker.sock
+	EOF
 
 	# Enable the experimental Cluster topology feature.
 	export CLUSTER_TOPOLOGY=true
 
-	clusterctl init --infrastructure docker
-	kubectl -n capd-system rollout status deploy capd-controller-manager
-	kubectl -n capi-system rollout status deploy capi-controller-manager
-	kubectl -n capi-kubeadm-bootstrap-system rollout status deploy capi-kubeadm-bootstrap-controller-manager
-	kubectl -n capi-kubeadm-control-plane-system rollout status deploy capi-kubeadm-control-plane-controller-manager
+	clusterctl init --infrastructure "$PROVIDER" --wait-providers
 }
 
 init_workload_cluster() {
@@ -138,7 +143,7 @@ init_workload_cluster() {
 	wait_for "kubeconfig to be created" "kubectl get secret capi-quickstart-kubeconfig"
 
 	# Deploy CNI to have a ready KCP.
-	kubectl get secret capi-quickstart-kubeconfig -ojson | jq -r .data.value | base64 -d > $TMP_PATH/kubeconfig-workloadcluster
+	kubectl get secret capi-quickstart-kubeconfig -ojsonpath='{.data.value}' | base64 -d > $TMP_PATH/kubeconfig-workloadcluster
 	# Preload CNI images to not hit the docker rate limit.
 	docker pull -q docker.io/calico/cni:$CALICO_VERSION
 	docker pull -q docker.io/calico/node:$CALICO_VERSION
@@ -207,11 +212,7 @@ migration_phase_cluster() {
 migration_phase_control_plane() {
 	echo "🐢 Phase 2 - Adopting the Control Planes."
 
-	# Get the actual end date from the kubeconfig client cert.
-	kubeconfigClientEndDate=$(kubectl get secret capi-quickstart-kubeconfig -ojson | jq -r '.data.value' | base64 -d | yq -r ".users[].user.client-certificate-data" | base64 -d | openssl x509 -noout -enddate | cut -d= -f2)
-	ceritificatesExpiry=$(date --date="$kubeconfigClientEndDate" "+%Y-%m-%dT%H:%M:%SZ")
-
-	# Get all control plane nodes from the cluster.
+	# Get all control plane nodes from the Cluster.
 	controlPlaneNodes=$(KUBECONFIG=/tmp/capi-migration/kubeconfig-workloadcluster kubectl get nodes -l node-role.kubernetes.io/control-plane= -oname | cut -d/ -f2)
 
 	# Get control plane information from Cluster.
@@ -223,7 +224,6 @@ migration_phase_control_plane() {
 	for node in $controlPlaneNodes; do
 		cat "$SCRIPT_DIR/manifests/kubeadmconfig_control-plane.yaml" \
 			| yq '.metadata.name = "'"$node"'"' \
-			| yq '.metadata.annotations["machine.cluster.x-k8s.io/certificates-expiry"] = "'"$ceritificatesExpiry"'"' \
 			| yq '.spec.clusterConfiguration.controlPlaneEndpoint = "'"${controlPlaneEndpoint}"'"' \
 			| yq ".spec.clusterConfiguration.networking.podSubnet = \"$podsCidr\"" \
 			| yq ".spec.clusterConfiguration.networking.serviceSubnet = \"$servicesCidr\"" \
@@ -234,11 +234,8 @@ migration_phase_control_plane() {
 	clusterUID=$(get_uid cluster capi-quickstart)
 
 	cat "$SCRIPT_DIR/manifests/kubeadmcontrolplane.yaml" \
-		| yq '.metadata.ownerReferences[].uid = "'"$clusterUID"'"' \
 		| kubectl apply -f -
 
-	# Patch controlplaneRef name in Cluster.
-	# kubectl patch cluster capi-quickstart --type='json' -p='[{"op": "replace", "path": "/spec/controlPlaneRef", "value": {"apiVersion": "controlplane.cluster.x-k8s.io/v1beta1", "kind": "KubeadmControlPlane", name: "'"$kubeadmControlPlaneName"'", "namespace": "default"}}]'
 	# Create secret-dummy. This secret is needed during node bootstrap and includes the cloud-init data.
 	kubectl create secret generic secret-dummy || true
 
@@ -254,7 +251,6 @@ migration_phase_control_plane() {
 
 		cat "$SCRIPT_DIR/manifests/machine_control-plane.yaml" \
 			| yq '.metadata.name = "'"$node"'"' \
-			| yq '.metadata.ownerReferences[].uid = "'"$kubeadmControlPlaneUID"'"' \
 			| yq '.spec.bootstrap.configRef.name = "'"$node"'"' \
 			| yq '.spec.bootstrap.configRef.uid = "'"$kubeadmConfigUID"'"' \
 			| yq '.spec.infrastructureRef.name = "'"$node"'"' \
@@ -285,28 +281,17 @@ migration_phase_worker() {
 	# The same for the MachineDeployment name. Just calculate it from the MachineSet.
 	machineDeploymentName=${machineSetName%-*}
 
-	# Apply control plane KubeadmConfigs.
-	for node in $workerNodes; do
-		cat "$SCRIPT_DIR/manifests/kubeadmconfig_control-plane.yaml" \
-			| yq '.metadata.name = "'"$node"'"' \
-			| yq '.metadata.annotations["cluster.x-k8s.io/set-name"] = "'"$machineSetName"'"' \
-			| yq '.metadata.annotations["cluster.x-k8s.io/deployment-name"] = "'"$machineDeploymentName"'"' \
-			| kubectl apply -f -
-	done
-
 	clusterUID=$(get_uid cluster capi-quickstart)
 	kubeadmConfigTemplateName=$machineDeploymentName
 
 	# Apply KubeadmConfigTemplate.
 	cat "$SCRIPT_DIR/manifests/kubeadmconfigtemplate.yaml" \
 		| yq '.metadata.name = "'"$kubeadmConfigTemplateName"'"' \
-		| yq '.metadata.ownerReferences[].uid = "'"$clusterUID"'"' \
 		| kubectl apply -f -
 
 	# Apply paused MachineDeployment.
 	cat "$SCRIPT_DIR/manifests/machinedeployment.yaml" \
 		| yq '.metadata.name = "'"$machineDeploymentName"'"' \
-		| yq '.metadata.ownerReferences[].uid = "'"$clusterUID"'"' \
 		| yq '.spec.template.spec.bootstrap.configRef.name = "'"$kubeadmConfigTemplateName"'"' \
 		| kubectl apply -f -
 	sleep 1
@@ -315,8 +300,6 @@ migration_phase_worker() {
 	# Apply Machineset.
 	cat "$SCRIPT_DIR/manifests/machineset.yaml" \
 		| yq '.metadata.name = "'"$machineSetName"'"' \
-		| yq '.metadata.ownerReferences[].uid = "'"$machineDeploymentUID"'"' \
-		| yq '.metadata.ownerReferences[].name = "'"$machineDeploymentName"'"' \
 		| yq '.spec.template.spec.bootstrap.configRef.name = "'"$kubeadmConfigTemplateName"'"' \
 		| kubectl apply -f -
 	sleep 1
@@ -324,17 +307,11 @@ migration_phase_worker() {
 
 	# Apply worker KubeadmConfigs and Machines.
 	for node in $workerNodes; do
-		kubeadmConfigUID=$(get_uid kubeadmconfig "$node")
-
 		# Get provider ID from backup. If you are trying to migrate a legacy cluster you have to get this somewhere else.
 		providerID=$(jq -r '.spec.providerID' "machine_$node.json")
 
 		cat "$SCRIPT_DIR/manifests/machine_worker.yaml" \
 			| yq '.metadata.name = "'"$node"'"' \
-			| yq '.metadata.ownerReferences[].uid = "'"$machineSetUID"'"' \
-			| yq '.metadata.ownerReferences[].name = "'"$machineSetName"'"' \
-			| yq '.spec.bootstrap.configRef.name = "'"$node"'"' \
-			| yq '.spec.bootstrap.configRef.uid = "'"$kubeadmConfigUID"'"' \
 			| yq '.spec.infrastructureRef.name = "'"$node"'"' \
 			| yq '.spec.providerID = "'"$providerID"'"' \
 			| kubectl apply -f -
@@ -374,6 +351,12 @@ rolling_upgrade_worker() {
 prereqs
 pushd $TMP_PATH/workload-backup/ > /dev/null
 
+press_enter() {
+	if [[ ! "$FORCE" = "true" ]]; then
+		read -r -p "🐢 Press ENTER to continue "
+	fi
+}
+
 case "${COMMAND}" in
 "purge_and_init_mgmt_cluster")
 	purge_and_init_mgmt_cluster
@@ -400,10 +383,20 @@ case "${COMMAND}" in
 	purge_and_init_mgmt_cluster
 	init_workload_cluster
 	purge_and_init_mgmt_cluster
+	press_enter
+
 	migration_phase_cluster
+	press_enter
+
 	migration_phase_control_plane
+	press_enter
+
 	migration_phase_worker
+	press_enter
+
 	rolling_upgrade_control_plane
+	press_enter
+
 	rolling_upgrade_worker
 	;;
 *)

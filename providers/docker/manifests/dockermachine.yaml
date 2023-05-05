@@ -10,13 +10,6 @@ metadata:
     cluster.x-k8s.io/control-plane-name: capi-quickstart
   name: capi-quickstart-control-plane-wz4w2-8lcgx
   namespace: default
-  ownerReferences:
-    - apiVersion: cluster.x-k8s.io/v1beta1
-      blockOwnerDeletion: true
-      controller: true
-      kind: Machine
-      name: capi-quickstart-w5jbn-k2hct
-      uid: 89d7c4d8-0e12-42ce-968a-cde181265149
 spec:
   bootstrapped: true
   customImage: kindest/node:v1.27.0
