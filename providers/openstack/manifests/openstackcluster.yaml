@@ -1,0 +1,24 @@
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha6
+kind: OpenStackCluster
+metadata:
+  name: capi-quickstart
+  namespace: default
+spec:
+  allowAllInClusterTraffic: false
+  apiServerLoadBalancer:
+    enabled: true
+  cloudName: capo-e2e
+  controlPlaneEndpoint:
+    host: 172.24.4.174
+    port: 6443
+  disableAPIServerFloatingIP: false
+  dnsNameservers:
+    - 8.8.8.8
+  externalNetworkId: tbd
+  identityRef:
+    kind: Secret
+    name: capi-quickstart-cloud-config
+  managedSecurityGroups: true
+  network: {}
+  nodeCidr: 10.6.0.0/24
+  subnet: {}

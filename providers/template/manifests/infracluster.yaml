@@ -1,0 +1,12 @@
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: InfraCluster
+metadata:
+  labels:
+    cluster.x-k8s.io/cluster-name: capi-quickstart
+  name: capi-quickstart
+  namespace: default
+spec:
+  controlPlaneEndpoint:
+    host: tbd
+    port: 6443
+  loadBalancer: {}

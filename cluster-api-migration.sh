@@ -1,22 +1,26 @@
 #!/bin/bash
 # shellcheck disable=SC1090,SC2002
 
-set -euo pipefail
+set -eo pipefail
+
+PROVIDER=${1:-"docker"}
+COMMAND=${2-""}
+FORCE=${FORCE:-"false"}
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+TMP_PATH=$SCRIPT_DIR/output
+TMP_BIN_PATH=$TMP_PATH/bin
+PATH=$TMP_BIN_PATH/:$PATH
 
 CAPI_VERSION=v1.4.2
 KIND_VERSION=v0.18.0
 YQ_VERSION=v4.33.3
 CALICO_VERSION=v3.24.1
-KUBERNETES_VERSION=v1.27.0
-TMP_PATH=/tmp/capi-migration
-TMP_BIN_PATH=$TMP_PATH/bin
-PATH=$TMP_BIN_PATH/:$PATH
-
-PROVIDER=${1:-"docker"}
-COMMAND=${2-""}
-FORCE=${FORCE:-"false"}
+KUBERNETES_VERSION=v1.27.1
+KUSTOMIZE_VERSION=v5.0.2
+WORKER_NODE_COUNT=3
+CONTROL_PLANE_NODE_COUNT=1
 
 PROVIDER_MANIFESTS_DIR="$SCRIPT_DIR/providers/$PROVIDER/manifests"
 
@@ -36,6 +40,7 @@ usage() {
 	echo
 	echo "Commands:"
 	echo "  purge_and_init_mgmt_cluster    Purge and initialize the management cluster."
+	echo "  kustomize_workload_manifest    Adjust the workload cluster manifest with kustomize."
 	echo "  init_workload_cluster          Initialize a new workload cluster."
 	echo "  migration_phase_cluster        Perform the migration phase on a cluster."
 	echo "  migration_phase_control_plane  Perform the migration phase on the control plane nodes of a cluster."
@@ -90,7 +95,7 @@ prereqs() {
 		chmod +x "${kind_location}"
 	fi
 
-	if ! command -v yq > /dev/null || file $(which yq) | grep -qi python; then
+	if ! command -v yq > /dev/null || file "$(command -v yq)" | grep -qi python; then
 		yq_location="$TMP_BIN_PATH/yq"
 		if [[ ! -f "$yq_location" ]]; then
 			wget -qO "${yq_location}" https://github.com/mikefarah/yq/releases/download/$YQ_VERSION/yq_linux_amd64
@@ -107,6 +112,11 @@ prereqs() {
 		k8sVersion=$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
 		wget -qO "$TMP_BIN_PATH/kubectl" "https://storage.googleapis.com/kubernetes-release/release/${k8sVersion}/bin/linux/amd64/kubectl"
 		chmod +x "$TMP_BIN_PATH/kubectl"
+	fi
+	if ! command -v kustomize > /dev/null; then
+		wget -qO "/tmp/kustomize.tgz" https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz
+		tar xfz /tmp/kustomize.tgz -C "$TMP_BIN_PATH"
+		chmod +x "$TMP_BIN_PATH/kustomize"
 	fi
 
 	# Source the infra specific prereqs and migration functions.
@@ -129,6 +139,7 @@ purge_and_init_mgmt_cluster() {
 		    - hostPath: /var/run/docker.sock
 		      containerPath: /var/run/docker.sock
 	EOF
+	kind get kubeconfig --name="capi-test" > $TMP_PATH/kubeconfig-capi-mgmt
 
 	# Enable the experimental Cluster topology feature.
 	export CLUSTER_TOPOLOGY=true
@@ -136,33 +147,61 @@ purge_and_init_mgmt_cluster() {
 	clusterctl init --infrastructure "$PROVIDER" --wait-providers
 }
 
-init_workload_cluster() {
-	# Delete workload cluster if it exists.
-	kind delete cluster --name capi-quickstart
+kustomize_resource() {
+	manifest_path=$1
+	manifest_filename=${manifest_path##*/}
+	mkdir -p $TMP_PATH/kustomize
+	rm -f $TMP_PATH/kustomize/*
+
+	cp "$manifest_path" "$TMP_PATH/kustomize/base_$manifest_filename"
+	cp "${SCRIPT_DIR}/providers/${PROVIDER}/kustomize/"* "$TMP_PATH/kustomize/"
+	cat <<- EOF > "$TMP_PATH/kustomize/kustomization.yaml"
+		resources:
+		- base_$manifest_filename
+	EOF
+
+	cat "${SCRIPT_DIR}/providers/${PROVIDER}/kustomize/kustomization.yaml" >> "$TMP_PATH/kustomize/kustomization.yaml"
+
+	kustomize build "$TMP_PATH/kustomize"
+}
+
+kustomize_workload_manifest() {
+	export KUBECONFIG=$TMP_PATH/kubeconfig-capi-mgmt
+
+	# Start with the prereqs for this stage.
+	init_workload_cluster_prereqs
+
 	# And create a new workload cluster.
-	clusterctl generate cluster capi-quickstart --flavor development \
+	clusterctl generate cluster capi-quickstart --flavor "$PROVIDER_FLAVOR" \
 		--kubernetes-version $KUBERNETES_VERSION \
-		--control-plane-machine-count=1 \
-		--worker-machine-count=3 | kubectl apply -f -
+		--infrastructure="$PROVIDER" \
+		--control-plane-machine-count=$CONTROL_PLANE_NODE_COUNT \
+		--worker-machine-count=$WORKER_NODE_COUNT \
+		> "$TMP_PATH/capi-quickstart.yaml"
+
+	kustomize_resource "$TMP_PATH/capi-quickstart.yaml" > "$TMP_PATH/capi-quickstart-kustomized.yaml"
+
+}
+
+init_workload_cluster() {
+	if [[ ! -f "$TMP_PATH/capi-quickstart-kustomized.yaml" ]]; then
+		echo "No capi-quickstart-kustomized.yaml manifest has been written. Run kustomize_workload_manifest first!"
+		exit 1
+	fi
+
+	kustomize_resource "$TMP_PATH/capi-quickstart-kustomized.yaml" | kubectl apply -f -
+
 	wait_for "kubeconfig to be created" "kubectl get secret capi-quickstart-kubeconfig"
 
 	# Deploy CNI to have a ready KCP.
 	kubectl get secret capi-quickstart-kubeconfig -ojsonpath='{.data.value}' | base64 -d > $TMP_PATH/kubeconfig-workloadcluster
-	# Preload CNI images to not hit the docker rate limit.
-	docker pull -q docker.io/calico/cni:$CALICO_VERSION
-	docker pull -q docker.io/calico/node:$CALICO_VERSION
-	docker pull -q docker.io/calico/kube-controllers:$CALICO_VERSION
 	wait_for "kube-apiserver to be reachable to deploy CNI" "timeout 1 kubectl --kubeconfig=$TMP_PATH/kubeconfig-workloadcluster get nodes"
-	# Wait until all workload machines have a docker provider ID. This ensures that the nodes have been created and we can preload the images.
-	wait_for "all Machines to be provisioned" "kubectl get machine -ojson | jq -e 'select(([select(.items[].spec.providerID != null)] | length) == (.items | length)) | true'"
-	kind load docker-image --name capi-quickstart docker.io/calico/cni:$CALICO_VERSION docker.io/calico/node:$CALICO_VERSION docker.io/calico/kube-controllers:$CALICO_VERSION
 	kubectl --kubeconfig=$TMP_PATH/kubeconfig-workloadcluster apply -f https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/calico.yaml
 
 	wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | kcp_or_md_ready"
 	wait_for "MachineDeployment to be ready" "kubectl get md -ojson | kcp_or_md_ready"
 
 	rm -f $TMP_PATH/workload-backup/*
-	rm -f $SCRIPT_DIR/providers/$PROVIDER/output/*
 	echo "🐢 Creating backup for..."
 	kubectl get "secret,$(kubectl api-resources -oname | grep cluster.x-k8s.io | cut -d. -f1 | xargs | sed 's/ /,/g')" -oname \
 		| while IFS=/ read -r kind name; do
@@ -181,16 +220,16 @@ migration_phase_cluster() {
 		cert=$(jq -r '.data["tls.crt"]' < "secret_capi-quickstart-${secret}.json")
 		key=$(jq -r '.data["tls.key"]' < "secret_capi-quickstart-${secret}.json")
 
-		cat "$SCRIPT_DIR/manifests/secret_cert.yaml" \
-			| yq '.metadata.name = "capi-quickstart-'"$secret"'"' \
-			| yq '.data["tls.crt"] = "'"$cert"'"' \
-			| yq '.data["tls.key"] = "'"$key"'"' \
+		kustomize_resource "$SCRIPT_DIR/manifests/secret_cert.yaml" \
+			| yq ".metadata.name = \"capi-quickstart-$secret\"" \
+			| yq ".data[\"tls.crt\"] = \"$cert\"" \
+			| yq ".data[\"tls.key\"] = \"$key\"" \
 			| kubectl apply -f -
 	done
 
 	kubeconfig=$(jq -r '.data.value' < "secret_capi-quickstart-kubeconfig.json")
-	cat "$SCRIPT_DIR/manifests/secret_kubeconfig.yaml" \
-		| yq '.data.value = "'"$kubeconfig"'"' \
+	kustomize_resource "$SCRIPT_DIR/manifests/secret_kubeconfig.yaml" \
+		| yq ".data.value = \"$kubeconfig\"" \
 		| kubectl apply -f -
 
 	# Get Cluster info from backup.
@@ -199,8 +238,14 @@ migration_phase_cluster() {
 	podsCidr=$(jq -cr ".spec.clusterNetwork.pods.cidrBlocks" < cluster_capi-quickstart.json)
 	servicesCidr=$(jq -cr ".spec.clusterNetwork.services.cidrBlocks" < cluster_capi-quickstart.json)
 
+	# If no services cidr block was defined use the default value.
+	# See https://github.com/kubernetes/kubernetes/blob/6aa68d6a8b48c88348d4acd4e39f864b4634270b/cmd/kubeadm/app/apis/kubeadm/v1beta3/defaults.go#L35
+	if [[ "$servicesCidr" = "null" ]]; then
+		servicesCidr='["10.96.0.0/12"]'
+	fi
+
 	# Apply paused Cluster.
-	cat "$SCRIPT_DIR/manifests/cluster.yaml" \
+	kustomize_resource "$SCRIPT_DIR/manifests/cluster.yaml" \
 		| yq ".spec.clusterNetwork.pods.cidrBlocks = $podsCidr" \
 		| yq ".spec.clusterNetwork.services.cidrBlocks = $servicesCidr" \
 		| yq ".spec.controlPlaneEndpoint.host = \"$controlPlaneEndpointHost\"" \
@@ -209,6 +254,7 @@ migration_phase_cluster() {
 
 	infra_cluster_migration
 
+	# Unpause Cluster.
 	kubectl annotate cluster capi-quickstart cluster.x-k8s.io/paused-
 	clusterctl describe cluster capi-quickstart -n default --grouping=false --show-conditions=all
 }
@@ -217,55 +263,66 @@ migration_phase_control_plane() {
 	echo "🐢 Phase 2 - Adopting the Control Planes."
 
 	# Get all control plane nodes from the Cluster.
-	controlPlaneNodes=$(KUBECONFIG=/tmp/capi-migration/kubeconfig-workloadcluster kubectl get nodes -l node-role.kubernetes.io/control-plane= -oname | cut -d/ -f2)
-
-	# Get control plane information from Cluster.
-	controlPlaneEndpoint=$(kubectl get cluster capi-quickstart -ojson | jq -r '.spec.controlPlaneEndpoint | "\(.host):\(.port)"')
-	podsCidr=$(kubectl get cluster capi-quickstart -ojsonpath='{.spec.clusterNetwork.pods.cidrBlocks[]}')
-	servicesCidr=$(kubectl get cluster capi-quickstart -ojsonpath='{.spec.clusterNetwork.services.cidrBlocks[]}')
+	controlPlaneNodes=$(KUBECONFIG=$TMP_PATH/kubeconfig-workloadcluster kubectl get nodes -l node-role.kubernetes.io/control-plane= -oname | cut -d/ -f2)
 
 	# Apply control plane KubeadmConfigs.
 	for node in $controlPlaneNodes; do
-		cat "$SCRIPT_DIR/manifests/kubeadmconfig_control-plane.yaml" \
-			| yq '.metadata.name = "'"$node"'"' \
-			| yq '.spec.clusterConfiguration.controlPlaneEndpoint = "'"${controlPlaneEndpoint}"'"' \
-			| yq ".spec.clusterConfiguration.networking.podSubnet = \"$podsCidr\"" \
-			| yq ".spec.clusterConfiguration.networking.serviceSubnet = \"$servicesCidr\"" \
+		# Get KubeadmConfig name from backup.
+		machineBackup=$(grep -l "$node" machine_*json)
+		machineName=$(jq -r '.metadata.name' "$machineBackup")
+		kubeadmConfigBackup=$(grep -l "$machineName" kubeadmconfig_*.json)
+
+		# Get spec from KubeadmConfig.
+		# You MUST ensure that the control plane kubeadmConfig.spec matches the running kubeadm config!
+		kubeadmConfigSpec=$(jq -c '.spec' "$kubeadmConfigBackup")
+		kustomize_resource "$SCRIPT_DIR/manifests/kubeadmconfig_control-plane.yaml" \
+			| yq ".metadata.name = \"$node\"" \
+			| yq ".spec = $kubeadmConfigSpec" \
 			| kubectl apply -f -
 	done
 
-	# Get Cluster UID.
-	clusterUID=$(get_uid cluster capi-quickstart)
+	# Get kubeadmConfigSpec from KubeadmControlPlane.
+	# You MUST ensure that the control plane kubeadmConfigSpec matches the running kubeadm config!
+	kcpConfigSpec=$(jq -c '.spec.kubeadmConfigSpec' kubeadmcontrolplane_*)
 
-	cat "$SCRIPT_DIR/manifests/kubeadmcontrolplane.yaml" \
+	kustomize_resource "$SCRIPT_DIR/manifests/kubeadmcontrolplane.yaml" \
+		| yq ".spec.kubeadmConfigSpec = $kcpConfigSpec" \
+		| yq ".spec.version = \"$KUBERNETES_VERSION\"" \
 		| kubectl apply -f -
 
-	# Create secret-dummy. This secret is needed during node bootstrap and includes the cloud-init data.
-	kubectl create secret generic secret-dummy || true
+	# Create secret-dummy. This secret is needed during node bootstrap and includes cloud-init data.
+	kubectl create secret generic secret-dummy --from-literal=value=empty || true
 
 	# Get KubeadmControlPlane UID.
-	kubeadmControlPlaneUID=$(get_uid kubeadmcontrolplane capi-quickstart)
+	kubeadmControlPlaneUID=$(get_uid kubeadmcontrolplane capi-quickstart-control-plane)
 
 	# Apply paused control plane Machines.
 	for node in $controlPlaneNodes; do
 		kubeadmConfigUID=$(get_uid kubeadmconfig "$node")
 
-		# Get provider ID from backup. If you are trying to migrate a legacy cluster you have to get this somewhere else.
-		providerID=$(jq -r '.spec.providerID' "machine_$node.json")
+		# Get Machine backup from node.
+		machineBackup=$(grep -l "$node" machine_*.json)
 
-		cat "$SCRIPT_DIR/manifests/machine_control-plane.yaml" \
-			| yq '.metadata.name = "'"$node"'"' \
-			| yq '.spec.bootstrap.configRef.name = "'"$node"'"' \
-			| yq '.spec.bootstrap.configRef.uid = "'"$kubeadmConfigUID"'"' \
-			| yq '.spec.infrastructureRef.name = "'"$node"'"' \
-			| yq '.spec.providerID = "'"$providerID"'"' \
+		# Get provider ID from backup. If you are trying to migrate a legacy cluster you have to get this somewhere else.
+		providerID=$(jq -r '.spec.providerID' "$machineBackup")
+
+		kustomize_resource "$SCRIPT_DIR/manifests/machine_control-plane.yaml" \
+			| yq ".metadata.name = \"$node\"" \
+			| yq ".spec.bootstrap.configRef.name = \"$node\"" \
+			| yq ".spec.bootstrap.configRef.uid = \"$kubeadmConfigUID\"" \
+			| yq ".spec.infrastructureRef.name = \"$node\"" \
+			| yq ".spec.providerID = \"$providerID\"" \
+			| yq ".spec.version = \"$KUBERNETES_VERSION\"" \
 			| kubectl apply -f -
 	done
 
 	infra_control_plane_migration
 
-	# Unpause KubeadmControlPlane.
-	kubectl annotate kubeadmcontrolplane capi-quickstart cluster.x-k8s.io/paused-
+	# Unpause Machines and KubeadmControlPlane.
+	for machine in $(kubectl get ma -l cluster.x-k8s.io/control-plane= -oname); do
+		kubectl annotate "$machine" cluster.x-k8s.io/paused-
+	done
+	kubectl annotate kubeadmcontrolplane capi-quickstart-control-plane cluster.x-k8s.io/paused-
 
 	wait_for "KubeadmControlPlane to be ready" "kubectl get kcp -ojson | kcp_or_md_ready"
 
@@ -276,54 +333,63 @@ migration_phase_worker() {
 	echo "🐢 Phase 3 - Adopting the MachineDeployment."
 
 	# Get all worker nodes from the cluster.
-	workerNodes=$(KUBECONFIG=/tmp/capi-migration/kubeconfig-workloadcluster kubectl get nodes -l node-role.kubernetes.io/control-plane!= -oname | cut -d/ -f2)
+	workerNodes=$(KUBECONFIG=$TMP_PATH/kubeconfig-workloadcluster kubectl get nodes -l node-role.kubernetes.io/control-plane!= -oname | cut -d/ -f2)
 
 	# Get MachineSet name by removing everything after the last dash of a random Pod.
 	# Note: this must be done manually if your node names are different to these from CAPI.
-	randomWorkerNodeName=$(KUBECONFIG=/tmp/capi-migration/kubeconfig-workloadcluster kubectl get nodes -l node-role.kubernetes.io/control-plane!= -oname | cut -d/ -f2 | head -n1)
+	randomWorkerNodeName=$(KUBECONFIG=$TMP_PATH/kubeconfig-workloadcluster kubectl get nodes -l node-role.kubernetes.io/control-plane!= -oname | cut -d/ -f2 | head -n1)
 	machineSetName=${randomWorkerNodeName%-*}
 	# The same for the MachineDeployment name. Just calculate it from the MachineSet.
 	machineDeploymentName=${machineSetName%-*}
-
-	clusterUID=$(get_uid cluster capi-quickstart)
 	kubeadmConfigTemplateName=$machineDeploymentName
 
 	# Apply KubeadmConfigTemplate.
-	cat "$SCRIPT_DIR/manifests/kubeadmconfigtemplate.yaml" \
-		| yq '.metadata.name = "'"$kubeadmConfigTemplateName"'"' \
+	kustomize_resource "$SCRIPT_DIR/manifests/kubeadmconfigtemplate.yaml" \
+		| yq ".metadata.name = \"$kubeadmConfigTemplateName\"" \
 		| kubectl apply -f -
 
 	# Apply paused MachineDeployment.
-	cat "$SCRIPT_DIR/manifests/machinedeployment.yaml" \
-		| yq '.metadata.name = "'"$machineDeploymentName"'"' \
-		| yq '.spec.template.spec.bootstrap.configRef.name = "'"$kubeadmConfigTemplateName"'"' \
+	kustomize_resource "$SCRIPT_DIR/manifests/machinedeployment.yaml" \
+		| yq ".metadata.name = \"$machineDeploymentName\"" \
+		| yq ".spec.template.spec.bootstrap.configRef.name = \"$kubeadmConfigTemplateName\"" \
+		| yq ".spec.template.spec.version = \"$KUBERNETES_VERSION\"" \
+		| yq ".spec.replicas = $WORKER_NODE_COUNT" \
 		| kubectl apply -f -
 	sleep 1
 	machineDeploymentUID=$(get_uid machinedeployment "$machineDeploymentName")
 
 	# Apply Machineset.
-	cat "$SCRIPT_DIR/manifests/machineset.yaml" \
-		| yq '.metadata.name = "'"$machineSetName"'"' \
-		| yq '.spec.template.spec.bootstrap.configRef.name = "'"$kubeadmConfigTemplateName"'"' \
+	kustomize_resource "$SCRIPT_DIR/manifests/machineset.yaml" \
+		| yq ".metadata.name = \"$machineSetName\"" \
+		| yq ".spec.template.spec.bootstrap.configRef.name = \"$kubeadmConfigTemplateName\"" \
+		| yq ".spec.template.spec.version = \"$KUBERNETES_VERSION\"" \
+		| yq ".spec.replicas = $WORKER_NODE_COUNT" \
 		| kubectl apply -f -
 	sleep 1
 	machineSetUID=$(get_uid machineset "$machineSetName")
 
-	# Apply worker KubeadmConfigs and Machines.
+	# Apply worker Machines.
 	for node in $workerNodes; do
-		# Get provider ID from backup. If you are trying to migrate a legacy cluster you have to get this somewhere else.
-		providerID=$(jq -r '.spec.providerID' "machine_$node.json")
+		# Get Machine backup from node.
+		machineBackup=$(grep -l "$node" machine_*.json)
 
-		cat "$SCRIPT_DIR/manifests/machine_worker.yaml" \
-			| yq '.metadata.name = "'"$node"'"' \
-			| yq '.spec.infrastructureRef.name = "'"$node"'"' \
-			| yq '.spec.providerID = "'"$providerID"'"' \
+		# Get provider ID from backup. If you are trying to migrate a legacy cluster you have to get this somewhere else.
+		providerID=$(jq -r '.spec.providerID' "$machineBackup")
+
+		kustomize_resource "$SCRIPT_DIR/manifests/machine_worker.yaml" \
+			| yq ".metadata.name = \"$node\"" \
+			| yq ".spec.infrastructureRef.name = \"$node\"" \
+			| yq ".spec.providerID = \"$providerID\"" \
+			| yq ".spec.version = \"$KUBERNETES_VERSION\"" \
 			| kubectl apply -f -
 	done
 
 	infra_worker_migration
 
-	# Unpause MachineDeployment and MachineSet.
+	# Unpause Machines, MachineDeployment and MachineSet.
+	for machine in $(kubectl get ma -l cluster.x-k8s.io/control-plane!= -oname); do
+		kubectl annotate "$machine" cluster.x-k8s.io/paused-
+	done
 	kubectl annotate machinedeployment "$machineDeploymentName" cluster.x-k8s.io/paused-
 	kubectl annotate machineset "$machineSetName" cluster.x-k8s.io/paused-
 
@@ -353,7 +419,7 @@ rolling_upgrade_worker() {
 }
 
 prereqs
-pushd $TMP_PATH/workload-backup/ > /dev/null
+pushd "$TMP_PATH/workload-backup" > /dev/null
 
 press_enter() {
 	if [[ ! "$FORCE" = "true" ]]; then
@@ -364,6 +430,9 @@ press_enter() {
 case "${COMMAND}" in
 "purge_and_init_mgmt_cluster")
 	purge_and_init_mgmt_cluster
+	;;
+"kustomize_workload_manifest")
+	kustomize_workload_manifest
 	;;
 "init_workload_cluster")
 	init_workload_cluster
@@ -385,6 +454,9 @@ case "${COMMAND}" in
 	;;
 "")
 	purge_and_init_mgmt_cluster
+	kustomize_workload_manifest
+	press_enter
+
 	init_workload_cluster
 	purge_and_init_mgmt_cluster
 	press_enter
@@ -411,7 +483,4 @@ case "${COMMAND}" in
 	;;
 esac
 
-pushd $TMP_PATH/workload-backup/ > /dev/null
-
-popd > /dev/null
 popd > /dev/null

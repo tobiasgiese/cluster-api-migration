@@ -1,0 +1,38 @@
+apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+kind: KubeadmControlPlane
+metadata:
+  name: capi-quickstart-control-plane
+spec:
+  kubeadmConfigSpec:
+    preKubeadmCommands:
+    - /usr/local/bin/ci-pre-kubeadm.sh
+    files:
+    - content: |                                                                                                                                                                                                                                                                                                                                                                            
+        #!/bin/bash
+        sysctl --system
+        systemctl restart systemd-modules-load.service
+        apt update -qq
+        echo "Installing containerd"
+        apt-get install -y containerd
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/kubernetes.gpg
+        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes.gpg] https://apt.kubernetes.io/ kubernetes-xenial main' > /etc/apt/sources.list.d/kubernetes.list
+        apt-get update
+        VERSION_WITHOUT_PREFIX="1.27.1"
+        # replace . with \.
+        VERSION_REGEX="${VERSION_WITHOUT_PREFIX//./\\.}"
+        PACKAGE_VERSION="$(apt-cache madison kubelet | grep "${VERSION_REGEX}-" | head -n1 | cut -d '|' -f 2 | tr -d '[:space:]')"
+        apt-get install -y kubeadm="${PACKAGE_VERSION}" kubelet="${PACKAGE_VERSION}" kubectl="${PACKAGE_VERSION}"
+      owner: root:root
+      path: /usr/local/bin/ci-pre-kubeadm.sh
+      permissions: "0750"
+    - content: |
+        br_netfilter
+      path: /etc/modules-load.d/k8s.conf
+      permissions: "0644"
+    - content: |
+        net.bridge.bridge-nf-call-iptables = 1
+        net.ipv4.ip_forward = 1
+        net.bridge.bridge-nf-call-ip6tables = 1
+      path: /etc/sysctl.d/99-kubernetes-cri.conf
+      permissions: "0644"

@@ -1,6 +1,8 @@
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: Machine
 metadata:
+  annotations:
+    cluster.x-k8s.io/paused: "true"
   labels:
     cluster.x-k8s.io/cluster-name: capi-quickstart
     cluster.x-k8s.io/deployment-name: capi-quickstart-md

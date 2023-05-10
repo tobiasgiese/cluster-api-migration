@@ -27,6 +27,10 @@ jobs:
         run: |
           ./cluster-api-migration.sh docker purge_and_init_mgmt_cluster
 
+      - name: Kustomize Workload Manifest
+        run: |
+          ./cluster-api-migration.sh docker kustomize_workload_manifest
+
       - name: Create Workload Cluster
         run: |
           ./cluster-api-migration.sh docker init_workload_cluster
