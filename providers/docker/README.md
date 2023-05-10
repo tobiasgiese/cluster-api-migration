@@ -14,9 +14,9 @@ sequenceDiagram
     kubectl-->>+Secrets: create etcd
     kubectl-->>+Secrets: create CA
     kubectl-->>+Secrets: create SA
-    kubectl-->>+Cluster: create paused cluster-name
-    kubectl-->>+DockerCluster: create cluster-name
-    kubectl-->>+Cluster: unpause cluster-name
+    kubectl-->>+Cluster: create paused Cluster
+    kubectl-->>+DockerCluster: create DockerCluster
+    kubectl-->>+Cluster: unpause Cluster
 ```
 
 #### Control Plane
@@ -24,14 +24,15 @@ sequenceDiagram
 ```mermaid
 %%{init:{"fontFamily":"monospace", "sequence":{"showSequenceNumbers":true}}}%%
 sequenceDiagram
-    kubectl-->>+KubeadmConfig: create for KubeadmControlPlane
-    kubectl-->>+KubeadmControlPlane: create paused kcp-name
-    kubectl-->>+Machine: create for each control plane node
+    kubectl-->>+KubeadmConfig: create for KCP
+    kubectl-->>+KubeadmControlPlane: create paused KCP
+    kubectl-->>+Machine: create paused for each control plane node
     kubectl-->>+DockerMachineTemplate: create for each control plane node
     kubectl-->>+KubeadmControlPlane: patch DockerMachineTemplate reference
     kubectl-->>+DockerMachine: create for each control plane node
     kubectl-->>+Machine: patch DockerMachine reference
-    kubectl-->>+KubeadmControlPlane: unpause kcp-name
+    kubectl-->>+Machine: unpause Machine
+    kubectl-->>+KubeadmControlPlane: unpause KCP
 ```
 
 #### Worker
@@ -40,14 +41,15 @@ sequenceDiagram
 %%{init:{"fontFamily":"monospace", "sequence":{"showSequenceNumbers":true}}}%%
 sequenceDiagram
     kubectl-->>+KubeadmConfigTemplate: create for MachineDeployment
-    kubectl-->>+MachineDeployment: create paused md-name
-    kubectl-->>+MachineSet: create paused ms-name
-    kubectl-->>+Machine: create for each worker node
+    kubectl-->>+MachineDeployment: create paused MD
+    kubectl-->>+MachineSet: create paused MS
+    kubectl-->>+Machine: create paused for each worker node
     kubectl-->>+MachineSet: patch DockerMachineTemplate kind in infrastructure reference
     kubectl-->>+MachineDepoloyment: patch DockerMachineTemplate kind in infrastructure reference
     kubectl-->>+DockerMachineTemplate: create for each worker node
     kubectl-->>+DockerMachine: create for each worker node
     kubectl-->>+Machine: patch DockerMachine reference
-    kubectl-->>+MachineDeployment: unpause md-name
-    kubectl-->>+MachineSet: unpause ms-name
+    kubectl-->>+Machine: unpause Machine
+    kubectl-->>+MachineDeployment: unpause MD
+    kubectl-->>+MachineSet: unpause MS
 ```
