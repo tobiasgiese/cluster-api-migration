@@ -1,0 +1,10 @@
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: InfraMachineTemplate
+metadata:
+  labels:
+    cluster.x-k8s.io/cluster-name: capi-quickstart
+  name: capi-quickstart
+  namespace: default
+spec:
+  template:
+    spec:

@@ -1,0 +1,14 @@
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: InfraMachine
+metadata:
+  annotations:
+    cluster.x-k8s.io/cloned-from-groupkind: InfraMachineTemplate.infrastructure.cluster.x-k8s.io
+    cluster.x-k8s.io/cloned-from-name: capi-quickstart
+  labels:
+    cluster.x-k8s.io/cluster-name: capi-quickstart
+    cluster.x-k8s.io/control-plane: ""
+    cluster.x-k8s.io/control-plane-name: capi-quickstart
+  name: capi-quickstart-control-plane-wz4w2-8lcgx
+  namespace: default
+spec:
+  providerID: tbd

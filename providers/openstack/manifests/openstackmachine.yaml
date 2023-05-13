@@ -1,0 +1,22 @@
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha6
+kind: OpenStackMachine
+metadata:
+  annotations:
+    cluster.x-k8s.io/cloned-from-groupkind: OpenStackMachineTemplate.infrastructure.cluster.x-k8s.io
+    cluster.x-k8s.io/cloned-from-name: capi-quickstart
+  labels:
+    cluster.x-k8s.io/cluster-name: capi-quickstart
+    cluster.x-k8s.io/control-plane: ""
+    cluster.x-k8s.io/control-plane-name: capi-quickstart-control-plane
+  name: capi-quickstart-control-plane-wz4w2-8lcgx
+  namespace: default
+spec:
+  cloudName: capo-e2e
+  flavor: m1.medium
+  identityRef:
+    kind: Secret
+    name: capi-quickstart-cloud-config
+  image: ubuntu-2004-kube-v1.23.10
+  instanceID: e05e9e9f-9fad-4a18-9a0d-29693c445c7b
+  providerID: openstack:///e05e9e9f-9fad-4a18-9a0d-29693c445c7b
+  sshKeyName: cluster-api-provider-openstack-sigs-k8s-io

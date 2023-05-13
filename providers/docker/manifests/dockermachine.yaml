@@ -7,7 +7,7 @@ metadata:
   labels:
     cluster.x-k8s.io/cluster-name: capi-quickstart
     cluster.x-k8s.io/control-plane: ""
-    cluster.x-k8s.io/control-plane-name: capi-quickstart
+    cluster.x-k8s.io/control-plane-name: capi-quickstart-control-plane
   name: capi-quickstart-control-plane-wz4w2-8lcgx
   namespace: default
 spec:

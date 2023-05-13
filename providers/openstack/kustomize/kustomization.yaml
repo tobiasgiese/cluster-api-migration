@@ -1,0 +1,7 @@
+patches:
+- path: kubeadmconfigtemplate.yaml
+  target:
+    kind: KubeadmConfigTemplate
+- path: kubeadmcontrolplane.yaml
+  target:
+    kind: KubeadmControlPlane

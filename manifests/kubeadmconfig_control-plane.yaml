@@ -16,18 +16,13 @@ spec:
         - 0.0.0.0
         - host.docker.internal
       extraArgs:
-        admission-control-config-file: /etc/kubernetes/kube-apiserver-admission-pss.yaml
-      extraVolumes:
-        - hostPath: /etc/kubernetes/kube-apiserver-admission-pss.yaml
-          mountPath: /etc/kubernetes/kube-apiserver-admission-pss.yaml
-          name: admission-pss
-          pathType: File
-          readOnly: true
+        cloud-provider: external
     clusterName: capi-quickstart
     controlPlaneEndpoint: 172.19.0.4:6443
     controllerManager:
       extraArgs:
         enable-hostpath-provisioner: "true"
+        cloud-provider: external
     dns: {}
     etcd:
       local: {}
@@ -37,27 +32,6 @@ spec:
       podSubnet: 192.168.0.0/16
       serviceSubnet: 10.128.0.0/12
     scheduler: {}
-  files:
-    - content: |
-        apiVersion: apiserver.config.k8s.io/v1
-        kind: AdmissionConfiguration
-        plugins:
-        - name: PodSecurity
-          configuration:
-            apiVersion: pod-security.admission.config.k8s.io/v1
-            kind: PodSecurityConfiguration
-            defaults:
-              enforce: "baseline"
-              enforce-version: "latest"
-              audit: "restricted"
-              audit-version: "latest"
-              warn: "restricted"
-              warn-version: "latest"
-            exemptions:
-              usernames: []
-              runtimeClasses: []
-              namespaces: [kube-system]
-      path: /etc/kubernetes/kube-apiserver-admission-pss.yaml
   format: cloud-config
   initConfiguration:
     localAPIEndpoint: {}
