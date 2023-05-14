@@ -28,8 +28,6 @@ You can simply run the script locally. Depending on how good the client resource
 ./cluster-api-migration
 ```
 
-> Note: currently only the `docker` (CAPD) provider is supported. In future more providers may be added.
-
 ### Script Stages
 
 The script has the following stages:
