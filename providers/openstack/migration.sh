@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2154,SC2002
+# shellcheck disable=SC2154
 
 infra_cluster_migration() {
 	# Apply cloud config secret.
@@ -28,7 +28,7 @@ infra_control_plane_migration() {
 	# Apply paused control plane OpenStackMachines and unpause Machine and OpenStackMachine.
 	for node in $controlPlaneNodes; do
 		# Get Machine backup from node.
-		openstackMachineBackup=$(grep -l "$node" openstackmachine_*.json)
+		openstackMachineBackup=$(grep -l "$node" "$TMP_PATH/workload-backup/openstackmachine_"*.json)
 
 		providerID=$(kubectl get machine "$node" -ojsonpath='{.spec.providerID}')
 		# Get instance ID from backup. If you are trying to migrate a legacy cluster you have to get this somewhere else.
@@ -63,7 +63,7 @@ infra_worker_migration() {
 	# Apply worker OpenStackMachines.
 	for node in $workerNodes; do
 		# Get Machine backup from node.
-		openstackMachineBackup=$(grep -l "$node" openstackmachine_*.json)
+		openstackMachineBackup=$(grep -l "$node" "$TMP_PATH/workload-backup/openstackmachine_"*.json)
 
 		providerID=$(kubectl get machine "$node" -ojsonpath='{.spec.providerID}')
 		# Get instance ID from backup. If you are trying to migrate a legacy cluster you have to get this somewhere else.
