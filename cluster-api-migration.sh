@@ -15,10 +15,10 @@ fi
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 
 source "$SCRIPT_DIR/config.env"
-source "$SCRIPT_DIR/libs/prereqs.sh"
-source "$SCRIPT_DIR/libs/utils.sh"
-source "$SCRIPT_DIR/libs/init.sh"
-source "$SCRIPT_DIR/libs/migration.sh"
+source "$SCRIPT_DIR/lib/prereqs.sh"
+source "$SCRIPT_DIR/lib/utils.sh"
+source "$SCRIPT_DIR/lib/init.sh"
+source "$SCRIPT_DIR/lib/migration.sh"
 
 TMP_PATH=$SCRIPT_DIR/output
 TMP_BIN_PATH=$TMP_PATH/bin
