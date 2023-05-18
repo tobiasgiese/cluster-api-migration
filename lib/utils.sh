@@ -1,24 +1,27 @@
 #!/bin/bash
 
 usage() {
-	echo "Usage: $0 [provider command]"
-	echo "Description: This script performs various operations. Leave empty if you want to run them all."
-	echo
-	echo "Example: $0 docker purge_and_init_mgmt_cluster"
-	echo
-	echo "Providers:"
-	echo "  docker (default)"
-	echo
-	echo "Commands:"
-	echo "  purge_and_init_mgmt_cluster    Purge and initialize the management cluster."
-	echo "  kustomize_workload_manifest    Adjust the workload cluster manifest with kustomize."
-	echo "  init_workload_cluster          Initialize a new workload cluster."
-	echo "  migration_phase_cluster        Perform the migration phase on a cluster."
-	echo "  migration_phase_control_plane  Perform the migration phase on the control plane nodes of a cluster."
-	echo "  migration_phase_worker         Perform the migration phase on the worker nodes of a cluster."
-	echo "  rolling_upgrade_control_plane  Perform a rolling upgrade of the control plane of a cluster."
-	echo "  rolling_upgrade_worker         Perform a rolling upgrade of the worker nodes of a cluster."
-	echo
+	cat <<- EOF
+		Usage: $0 [<provider> <command>]
+		Description: This script performs various operations. Leave empty if you want to run them all.
+		             If you do not define any command, all stages will be performed.
+
+		Example: $0 docker purge_and_init_mgmt_cluster
+
+		Providers:
+		  docker (default)
+		  openstack
+
+		Commands:
+		  purge_and_init_mgmt_cluster    Purge and initialize the management cluster.
+		  kustomize_workload_manifest    Create the workload cluster manifest using kustomize.
+		  init_workload_cluster          Initialize a new workload cluster.
+		  migration_phase_cluster        Perform the migration phase on a cluster.
+		  migration_phase_control_plane  Perform the migration phase on the control plane nodes of a cluster.
+		  migration_phase_worker         Perform the migration phase on the worker nodes of a cluster.
+		  rolling_upgrade_control_plane  Perform a rolling upgrade of the control plane of a cluster.
+		  rolling_upgrade_worker         Perform a rolling upgrade of the worker nodes of a cluster.
+	EOF
 }
 
 kustomize_resource() {
